@@ -1,4 +1,5 @@
 import { TOOL_DEFINITIONS, validateToolArguments } from './tool-definitions.mjs?v=18';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveRuntimePaths } from './runtime-paths.mjs';
@@ -185,6 +186,23 @@ export async function apply(ctx, config = {}) {
       .catch((error) => { controllerPromise = undefined; throw error; });
     return controllerPromise;
   };
+  // 登录二维码：截取专用页登录框，经微信号召服务推给本人；自动触发时做一分钟去重。
+  let lastQrPushAt = 0;
+  const pushLoginQr = async ({ reason = '', auto = false } = {}) => {
+    if (auto && Date.now() - lastQrPushAt < 60_000) return { sent: false, reason: '刚刚发送过二维码，请稍后重试。' };
+    const controller = await getController();
+    const shot = await controller.captureLoginQr();
+    if (shot.alreadyLoggedIn) return { sent: false, reason: '当前已登录，无需二维码。' };
+    const stateDir = controller.limits().stateDir;
+    fs.mkdirSync(stateDir, { recursive: true });
+    const file = path.join(stateDir, 'login-qr.png');
+    fs.writeFileSync(file, shot.buffer, { mode: 0o600 });
+    const push = optionalService(ctx, 'weixinPush');
+    if (!push?.toOwner) return { sent: false, file, message: '微信插件未提供推送服务，二维码已保存在本机。' };
+    const result = await push.toOwner({ text: reason || '抖音需要重新登录，请在 2 分钟内扫码（保存图片后可在抖音扫一扫里选相册）。', imagePath: file });
+    if (result?.ok === true) { lastQrPushAt = Date.now(); return { sent: true, file, message: `已发送到微信（${result.target || '本人会话'}）。` }; }
+    return { sent: false, file, message: result?.error || '微信发送失败。' };
+  };
   const {PersonaMemory}=await import('./persona-memory.mjs?v=10');
   const sharedPersona=new PersonaMemory();
   const personaBinding=bindNativePersonaContext(ctx,{workspacePaths:[path.dirname(resolveRuntimePaths().memoryDir),path.dirname(fileURLToPath(import.meta.url))],getPersonaMemory:()=>{
@@ -195,7 +213,7 @@ export async function apply(ctx, config = {}) {
     if (!watchPromise) watchPromise=Promise.all([getController(),import('./autonomous-watch.mjs?v=18')]).then(async ([controller,{AutonomousWatch}])=>{
       if(starting) sharedPersona.initialize({importLegacy:false});
       const route=exec.agent?.session?.requestHeader?.()?.config ?? exec.agent?.options ?? {};
-      return new AutonomousWatch({controller,videoLimits:controller.limits(),personaMemory:sharedPersona,commentService:await controller.getComments(),reportService:await controller.getReport(),source:'dsh',config:{apiKey:'',baseUrl:'https://api.deepseek.com',model:route.model||'deepseek-flash'},...(starting?{decisionProvider:createNativeWatchDecision({llm:optionalService(ctx,'llm'),attachments:optionalService(ctx,'attachments'),agent:exec.agent})}:{})});
+      return new AutonomousWatch({controller,videoLimits:controller.limits(),personaMemory:sharedPersona,commentService:await controller.getComments(),reportService:await controller.getReport(),source:'dsh',config:{apiKey:'',baseUrl:'https://api.deepseek.com',model:route.model||'deepseek-flash'},onEvent:event=>{try{if(event?.type==='watch.failed'&&/登录|验证/.test(String(event.message||'')))void pushLoginQr({auto:true,reason:'自主观看因登录或验证停止，二维码已附上。'}).catch(()=>{});}catch{}},...(starting?{decisionProvider:createNativeWatchDecision({llm:optionalService(ctx,'llm'),attachments:optionalService(ctx,'attachments'),agent:exec.agent})}:{})});
     }).catch(error=>{watchPromise=undefined;throw error;});
     const watch=await watchPromise;
     if(starting) {
@@ -258,7 +276,7 @@ export async function apply(ctx, config = {}) {
       });
       if (optionalService(ctx, 'commands')) await commandFiber.await();
       settingsFiber = bindNativeSettingsRoutes(ctx, () => createNativeSettingsRoute({
-          getController, modelSettings, watchSchedule, getDiagnostics, getFriends:async()=>friendInteractions,
+          getController, modelSettings, watchSchedule, getDiagnostics, pushLoginQr, getFriends:async()=>friendInteractions,
           getComments: async () => (await getController()).getComments(),
           getReport: async () => (await getController()).getReport(),
           getSpark: async () => (await getController()).getSparkService(),

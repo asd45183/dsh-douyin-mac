@@ -19,7 +19,7 @@ const active = state => Boolean(state?.running || state?.starting || state?.busy
 const chatBusy = state => Boolean(state?.starting || state?.busy || state?.contacts?.some(item => item.pending?.phase === 'model'));
 
 // 复用 DSH 原生 WebServer 和设置页插槽，不启动独立软件或第二个端口。
-export function createNativeSettingsRoute({ getController, getComments, getReport, getSpark, getWatch, getMode, getShare, getChat, getMedia, getFriends, modelSettings, configureMode, startWatch, startSpark, startChat, watchSchedule, getDiagnostics } = {}) {
+export function createNativeSettingsRoute({ getController, getComments, getReport, getSpark, getWatch, getMode, getShare, getChat, getMedia, getFriends, modelSettings, configureMode, startWatch, startSpark, startChat, watchSchedule, getDiagnostics, pushLoginQr } = {}) {
   const token = randomBytes(32).toString('hex');
   let diagnostics;
   return { kind: 'prefix', path: PREFIX, async handler(req, res) {
@@ -64,6 +64,7 @@ export function createNativeSettingsRoute({ getController, getComments, getRepor
         case '/video/stop': empty(input); value = controller.limits().endSession({ explicit: true }); await controller.pauseForLimits?.(); break;
         case '/browser/open': empty(input); value = await controller.openBrowser(); break;
         case '/account/login': empty(input); value = await controller.openLogin(); break;
+        case '/account/qr': { empty(input); if (typeof pushLoginQr !== 'function') throw Object.assign(new Error('当前宿主没有二维码推送通道。'), { status: 409 }); value = await pushLoginQr({}); break; }
         case '/persona/configure': {
           if (Object.keys(input).some(key => !['content', 'expectedRevision'].includes(key))) throw Object.assign(new Error('人格设置只接收正文和读取版本。'), { status: 400 });
           if (active((await getWatch()).state()) || active((await getSpark()).state()) || getChat && chatBusy((await getChat()).state())) throw Object.assign(new Error('请先停止自主观看或等待正在处理的私信完成，再保存人格。'), { status: 409 });

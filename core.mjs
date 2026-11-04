@@ -625,6 +625,51 @@ export class BrowserController {
     const state = await page.evaluate(readPageState).catch(() => ({}));
     return { opened: true, clicked, loginRequired: state.loginRequired === true, verificationRequired: state.verificationRequired === true, message: clicked ? '已打开登录入口，请在本机专用 Chrome 中扫码登录。' : '已打开抖音首页；若没有登录框，请点右上角“登录”后扫码。' };
   }
+  // 截取登录二维码：优先裁切登录框，找不到时退回整页截图；已登录时直接返回。
+  async captureLoginQr({ signal } = {}) {
+    let { page } = await this.locatablePage({ signal });
+    if (!page) {
+      await this.openBrowser({ signal });
+      ({ page } = await this.locatablePage({ signal }));
+    }
+    if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
+    this.page = page;
+    await this._bringPageToFront(page);
+    const account = await this.accountState({ signal });
+    if (account.loggedIn === true) return { alreadyLoggedIn: true, message: '当前已登录，无需发送二维码。' };
+    const clicked = await page.evaluate(() => {
+      const usable = element => { const box = element.getBoundingClientRect(), style = getComputedStyle(element); return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'; };
+      const candidates = [...document.querySelectorAll('button,a,div[role="button"],div,span')].filter(element => usable(element) && (element.innerText || '').replace(/\s+/g, '') === '登录');
+      const target = candidates.find(element => ['BUTTON', 'A'].includes(element.tagName)) || candidates[0];
+      if (!target) return false;
+      target.click(); return true;
+    }).catch(() => false);
+    // 二维码是登录框内 120–320px 的方形图片，通常以 data:image 形式注入；等它渲染出来。
+    await page.waitForFunction(() => [...document.querySelectorAll('img')].some(img => /^data:image\//.test(img.getAttribute('src') || '') && (() => { const box = img.getBoundingClientRect(); return box.width >= 120 && box.width <= 320 && Math.abs(box.width - box.height) < 24; })()), { timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(600);
+    const qrDataUrl = await page.evaluate(() => {
+      const square = [...document.querySelectorAll('img')].filter(img => /^data:image\//.test(img.getAttribute('src') || ''));
+      const target = square.find(img => { const box = img.getBoundingClientRect(); return box.width >= 120 && box.width <= 320 && Math.abs(box.width - box.height) < 24; });
+      return target ? target.src : null;
+    }).catch(() => null);
+    let qrBuffer = null;
+    const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(qrDataUrl || '');
+    if (match) { try { qrBuffer = Buffer.from(match[2], 'base64'); } catch { qrBuffer = null; } }
+    const clip = await page.evaluate(() => {
+      const usable = element => { const box = element.getBoundingClientRect(), style = getComputedStyle(element); return box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0 && box.top < innerHeight && box.left < innerWidth && style.display !== 'none' && style.visibility !== 'hidden'; };
+      const sized = [...document.querySelectorAll('div')]
+        .filter(element => usable(element) && (element.innerText || '').includes('扫码登录'))
+        .map(element => ({ box: element.getBoundingClientRect() }))
+        .filter(item => item.box.width >= 260 && item.box.width <= 760 && item.box.height >= 260 && item.box.height <= 820)
+        .sort((a, b) => a.box.width * a.box.height - b.box.width * b.box.height);
+      const first = sized[0];
+      if (!first) return null;
+      const left = Math.max(0, first.box.x), top = Math.max(0, first.box.y);
+      return { x: left, y: top, width: Math.max(40, Math.min(innerWidth - left, first.box.width)), height: Math.max(40, Math.min(innerHeight - top, first.box.height)) };
+    }).catch(() => null);
+    const buffer = qrBuffer || await page.screenshot({ ...(clip ? { clip } : {}), type: 'png', timeout: 20_000 });
+    return { alreadyLoggedIn: false, buffer, clip, clicked, kind: qrBuffer ? 'qr' : 'page', message: qrBuffer ? '已截取登录二维码。' : clip ? '未读取到二维码图片，已截取登录框。' : '未定位到登录框，已截取当前页面。' };
+  }
   releaseIdlePreparePage({signal,authorizePrepare}={}) {
     const operation=this.queue.catch(()=>{}).then(async()=>{
       aborted(signal);
