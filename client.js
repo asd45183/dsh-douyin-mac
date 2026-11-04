@@ -6,7 +6,7 @@ window.__ModuleLoader__.load({
     const { createElement: h, useEffect, useRef, useState } = React;
     const Button = primitives.Button, Input = primitives.Input || 'input';
     const PREFIX = '/api/douyin-browser';
-    const routes = new Set(['/interactions/configure', '/state', '/diagnostics', '/diagnostics/repair', '/watch/schedule', '/watch/options', '/video/configure', '/video/start', '/video/stop', '/browser/open', '/account/state', '/account/login', '/account/logout', '/account/qr', '/persona/configure', '/model/configure', '/mode/configure', '/watch/start', '/watch/stop', '/spark/configure', '/spark/start', '/spark/stop', '/spark/resolve', '/comments/configure', '/comments/resolve', '/share/configure', '/share/resolve', '/chat/contacts', '/chat/configure', '/chat/start', '/chat/stop', '/chat/prepare', '/chat/resolve', '/chat/unanswered', '/chat/unanswered/resolve', '/media/configure', '/media/credentials', '/reports/generate']);
+    const routes = new Set(['/interactions/configure', '/state', '/diagnostics', '/diagnostics/repair', '/watch/schedule', '/watch/options', '/video/configure', '/video/start', '/video/stop', '/browser/open', '/account/state', '/account/login', '/account/logout', '/account/qr', '/account/qr/capture', '/persona/configure', '/model/configure', '/mode/configure', '/watch/start', '/watch/stop', '/spark/configure', '/spark/start', '/spark/stop', '/spark/resolve', '/comments/configure', '/comments/resolve', '/share/configure', '/share/resolve', '/chat/contacts', '/chat/configure', '/chat/start', '/chat/stop', '/chat/prepare', '/chat/resolve', '/chat/unanswered', '/chat/unanswered/resolve', '/media/configure', '/media/credentials', '/reports/generate']);
     const column = { display: 'flex', flexDirection: 'column', gap: 12 };
     const row = { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' };
     const muted = { color: 'var(--dsw-alias-label-tertiary)', fontSize: 13, margin: 0 };
@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState(null), [ready, setReady] = useState(false), [connectionError, setConnectionError] = useState(''), [notice, setNotice] = useState(''), [category, setCategory] = useState('基础设置');
       const [operationErrors, setOperationErrors] = useState({});
       const [busy, setBusy] = useState(new Set()), [contacts, setContacts] = useState(null), [discovery, setDiscovery] = useState(null), [diagnostics, setDiagnostics] = useState(null), [repairResult, setRepairResult] = useState(''), [report, setReport] = useState(null), [reportDate, setReportDate] = useState('');
-      const [credentials, setCredentials] = useState({ mimo: '', minimax: '' }), [keyStatus, setKeyStatus] = useState({}), [reviews, setReviews] = useState(new Set()), [account, setAccount] = useState(null);
+      const [credentials, setCredentials] = useState({ mimo: '', minimax: '' }), [keyStatus, setKeyStatus] = useState({}), [reviews, setReviews] = useState(new Set()), [account, setAccount] = useState(null), [qrImage, setQrImage] = useState('');
       const existingAuthorization = useRef(false); const alive = useRef(true), refreshing = useRef(null), refreshAgain = useRef(false), locks = useRef(new Set()), submitted = useRef(new Set()), keyValues = useRef(credentials);
       const active = value => value?.running || value?.starting || value?.busy || value?.worker?.alive;
       const operationActive = active(state?.watch) || state?.chat?.starting || state?.chat?.busy || state?.share?.busy;
@@ -190,13 +190,15 @@ window.__ModuleLoader__.load({
         category === '基础设置' && h('div', null,
           section('抖音账号',
             note(!account ? '正在读取登录状态…' : (account.note || (account.connected ? (account.loggedIn === true ? '已登录抖音。' : account.loggedIn === false ? '尚未登录抖音。' : '登录状态暂时无法确认。') : '专用浏览器未打开。'))),
-            note('登录态保存在本机专用 Chrome 资料目录（~/.dsh/douyin-browser/cli-profile）。换账号请在 Chrome 右上角头像退出登录，再重新扫码；不会影响人格与记忆。'),
+            note('登录态保存在本机专用 Chrome 资料目录（~/.dsh/douyin-browser/cli-profile）。换账号先点“退出登录”，再点“获取登录二维码”扫码；不会影响人格与记忆。'),
             h('div', { style: row },
               button('检查登录状态', 'accountCheck', () => { void perform('accountCheck', async () => { const value = await api.request('/account/state'); setAccount(value); return value; }); }),
+              button('获取登录二维码', 'accountQrShow', () => { void perform('accountQrShow', async () => { const value = await api.request('/account/qr/capture', {}); if (value.imageDataUrl) setQrImage(value.imageDataUrl); else setQrImage(''); setAccount(previous => ({ ...(previous || {}), ...value, note: value.message || previous?.note })); return value; }); }, false, false),
               button('退出登录', 'accountLogout', () => { if (!globalThis.confirm?.('确认退出抖音登录？退出后需要重新扫码。')) return; void perform('accountLogout', async () => { const value = await api.request('/account/logout', {}); setAccount(previous => ({ ...(previous || {}), ...value, note: value.message || previous?.note })); return value; }); }, false, false),
               button('发送二维码到微信', 'accountQr', () => { void perform('accountQr', async () => { const value = await api.request('/account/qr', {}); setAccount(previous => ({ ...(previous || {}), ...value, note: value.message || previous?.note })); return value; }); }, false, false),
               button('打开登录页', 'accountLogin', () => { void perform('accountLogin', async () => { const value = await api.request('/account/login'); setAccount(previous => ({ ...(previous || {}), ...value })); return value; }); }, false, false),
             ),
+            qrImage && h('div', { style: column }, h('img', { src: qrImage, alt: '抖音登录二维码', style: { width: 220, height: 220, imageRendering: 'pixelated', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8, background: '#fff' } }), note('用抖音 App 扫一扫扫描；二维码约 2 分钟过期，过期后重新点“获取登录二维码”。')),
             account?.message && note(account.message),
             account?.loginRequired && note('页面检测到登录提示，请在专用 Chrome 中扫码后点“检查登录状态”。')),
           section('DSH 模型', select('模型提供商', model.draft.provider, [['', '请选择 DSH 提供商'], ...(state?.model?.providers || []).map(item => [item.id, item.name || item.id])], provider => model.edit({ provider, model: '' }, { immediate: true }), operationActive), select('模型名称', model.draft.model, [['', '请选择模型'], ...(state?.model?.models || []).filter(item => item.provider === model.draft.provider).map(item => [item.id, item.name || item.id])], value => model.edit({ model: value }, { immediate: true }), operationActive), status(model), note(state?.model?.configured ? '模型已配置。' : '请选择已配置的 DSH 模型。')),
