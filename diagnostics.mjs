@@ -2,12 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { resolveRuntimePaths, resolveNodeExecutable } from './runtime-paths.mjs';
 import { probeChromeInstallation, sanitizeBrowserFailure } from './browser-host.mjs';
 
 const execute = promisify(execFile);
-const VERSION = '1.4.6';
+const VERSION = (() => { try { return JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version } catch { return '0.0.0' } })();
 const REPAIR = 'reapply_silent';
 const resolution = (kind, steps = [], action) => ({ kind, steps, ...(action ? { action } : {}) });
 const automatic = () => resolution('automatic', ['重新连接已核对归属的现有专用浏览器，重新应用已开启的静默设置，再回读窗口和媒体状态。'], REPAIR);
@@ -125,8 +126,13 @@ export async function runDiagnostics({ source = 'api', modelConfigured = false, 
   });
   if (watchSchedule) await check('schedule', '允许时段自动启动', () => {
     const state = watchSchedule.state();
-    if (state.lastError) return { warning: true, code: 'SCHEDULE_START_FAILED', message: '最近一次自动启动未完成，原调度记录已保留。', resolution: resolution('user', ['核对本报告中的模型、浏览器和运行状态；不要删除时段回执来重复启动。']) };
-    return { message: state.policy?.enabled ? '已开启按允许时段启动；实际观看仍受轮次、模型和预算约束。' : '自动启动未开启；仅设置允许时段不会到点启动。', evidence: { enabled: Boolean(state.policy?.enabled) } };
+    const last = state.last;
+    const now = Date.now();
+    const inCurrentSlot = Boolean(last && Number.isFinite(last.startAt) && Number.isFinite(last.expiresAt) && last.startAt <= now && now < last.expiresAt);
+    if (state.policy?.enabled === false) return { message: '自动启动未开启；仅设置允许时段不会到点启动。今天额度用完后也不会自动补跑。', evidence: { enabled: false } };
+    if (state.lastError && inCurrentSlot) return { warning: true, code: 'SCHEDULE_START_FAILED', message: '当前允许时段内的自动启动未完成，原调度记录已保留。', resolution: resolution('user', ['核对本报告中的模型、浏览器和运行状态；不要删除时段回执来重复启动。']) };
+    if (state.lastError) return { message: '历史时段有一次自动启动失败，已不在当前时段，不会阻止下一次启动。', evidence: { enabled: true, lastErrorAt: last?.completedAt || null } };
+    return { message: '已开启按允许时段启动；实际观看仍受模型、每日额度和允许时段约束。', evidence: { enabled: true } };
   });
   if (interactionStates) await check('interactions', '好友互动与发送核对', async () => {
     const states = await interactionStates();

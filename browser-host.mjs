@@ -24,6 +24,15 @@ export function classifyBrowserLaunchError(error, { version } = {}) {
   return { code, message: (browserVersion ? `标准路径 Chrome 版本 ${browserVersion}。` : '未读取到标准路径 Chrome 版本。') + message, browserVersion, details };
 }
 async function readChromeVersion(file) {
+  // macOS 上运行 Chrome 二进制可能直接拉起浏览器或无输出；优先读 Info.plist。
+  if (process.platform === 'darwin') {
+    try {
+      const plist = path.resolve(path.dirname(file), '..', 'Info.plist');
+      const result = await execute('/usr/bin/plutil', ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', plist], { timeout: 5000, maxBuffer: 2048 });
+      const version = versionOf(result.stdout);
+      if (version) return version;
+    } catch {}
+  }
   try {
     const result = await execute(file, ['--version'], { timeout: 5000, maxBuffer: 2048 });
     return versionOf(result.stdout);

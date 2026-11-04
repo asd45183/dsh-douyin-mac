@@ -1,6 +1,6 @@
 {
   "name": "dsh-douyin-mac",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "type": "module",
   "description": "macOS 版 DSH 抖音工具：Chrome 专用窗口驱动、人格记忆与自主观看",
   "license": "MIT",
