@@ -132,7 +132,7 @@ window.__ModuleLoader__.load({
           let latest;
           do {
             refreshAgain.current = false;
-            try { const value = await api.request('/state'); if (alive.current && !refreshAgain.current) { latest = value; setState(value); setReady(true); setConnectionError(''); } }
+            try { const value = await api.request('/state'); if (alive.current && !refreshAgain.current) { latest = value; setState(value); setReady(true); setConnectionError(''); if (fresh) void api.request('/account/state').then(accountValue => { if (alive.current) setAccount(accountValue); }).catch(() => {}); } }
             catch (failure) { if (alive.current && !refreshAgain.current) { setReady(false); setConnectionError(failure.message); } }
           } while (alive.current && refreshAgain.current);
           return latest;
@@ -141,7 +141,15 @@ window.__ModuleLoader__.load({
       }
       useEffect(() => { alive.current = true; void refresh(); const timer = setInterval(() => { void refresh(); }, 2500); return () => { alive.current = false; clearInterval(timer); }; }, [api]);
       useEffect(() => { if (!reportDate && state?.reports?.date) setReportDate(state.reports.date); }, [state]);
-      useEffect(() => { if (!ready) return; let aliveAccount = true; void api.request('/account/state').then(value => { if (aliveAccount) setAccount(value); }).catch(() => {}); return () => { aliveAccount = false; }; }, [ready, api]);
+      useEffect(() => {
+        if (!ready) return;
+        let aliveAccount = true;
+        const tick = () => { void api.request('/account/state').then(value => { if (aliveAccount) setAccount(value); }).catch(() => {}); };
+        tick();
+        // 未登录时更频繁地刷新，扫码完成后不用手动点也能看到状态变化。
+        const timer = setInterval(tick, account?.loggedIn === true ? 30_000 : 8_000);
+        return () => { aliveAccount = false; clearInterval(timer); };
+      }, [ready, api, account?.loggedIn]);
       const write = route => async payload => { const result = await api.request(route, payload); void refresh(true); return result; };
       const list = text => String(text || '').split(/[\n,;，；]+/).map(item => item.trim()).filter(Boolean);
       const positive = (value, label) => { const number = Number(value); if (String(value).trim() === '' || !Number.isSafeInteger(number) || number < 1) throw new Error(`${label}请填写正整数。`); return number; };
@@ -185,7 +193,7 @@ window.__ModuleLoader__.load({
         h('h2', null, '大肥鱼抖音助手'), !ready && h('p', { role: 'status' }, '正在核实插件状态。'), connectionError && h('p', { role: 'alert' }, connectionError),
         ...Object.entries(operationErrors).map(([key, failure]) => h('div', { key, role: 'alert', style: row }, h('span', null, `${failure.requestError ? '上次操作：' : ''}${failure.message}${failure.requestError && ready ? failure.unconfirmed ? ' 本机服务当前已连接；请核对上述操作是否生效。' : ' 本机服务当前已连接。' : ''}`), h('button', { type: 'button', 'aria-label': `清除${operationLabel(key)}提示`, onClick: () => setOperationErrors(old => { const next = { ...old }; delete next[key]; return next; }) }, '×'))), notice && h('p', { role: 'status' }, notice),
         h('div', { role: 'status', 'aria-live': 'polite', style: { ...row, position: 'sticky', top: 0, zIndex: 5, background: 'var(--dsw-alias-bg-base, #fff)', padding: '8px 0' }, title: [presenceReason, watchState?.active ? watchState.reason : ''].filter(Boolean).join(' ') }, h('span', { 'aria-label': '好友互动状态', title: presenceReason, style: { border: '1px solid currentColor', borderRadius: 20, padding: '6px 12px', whiteSpace: 'nowrap' } }, `${replyPresence?.online === true ? '●' : '○'} ${presenceLabel}`), watchState?.active && h('small', { role: 'status', 'aria-label': '自主观看状态', title: watchState.reason, style: muted }, `◉ ${watchLabel}`), (['attention', 'preparing'].includes(replyPresence?.status) || watchState?.active && replyPresence?.online !== true) && h('small', { role: replyPresence?.status === 'attention' ? 'alert' : 'status', style: muted }, presenceReason)),
-        h('div', { style: row }, button('刷新插件状态', 'refresh', () => { void refresh(); }, false, false), button('打开抖音', 'browser', () => { void perform('browser', () => api.request('/browser/open', {})); }), button(confirming === 'browserClose' ? '确认关闭浏览器' : '关闭浏览器', 'browserClose', () => { if (confirming !== 'browserClose') { setConfirming('browserClose'); setNotice('再点一次“确认关闭浏览器”执行；不会清除登录态。'); setTimeout(() => setConfirming(current => current === 'browserClose' ? '' : current), 6000); return; } setConfirming(''); void perform('browserClose', () => api.request('/browser/close', {})); }, false, false)),
+        h('div', { style: row }, button('刷新插件状态', 'refresh', async () => { await refresh(true); setNotice('已刷新插件状态。'); }, false, false), button('打开抖音', 'browser', () => { void perform('browser', () => api.request('/browser/open', {})); }), button(confirming === 'browserClose' ? '确认关闭浏览器' : '关闭浏览器', 'browserClose', () => { if (confirming !== 'browserClose') { setConfirming('browserClose'); setNotice('再点一次“确认关闭浏览器”执行；不会清除登录态。'); setTimeout(() => setConfirming(current => current === 'browserClose' ? '' : current), 6000); return; } setConfirming(''); void perform('browserClose', () => api.request('/browser/close', {})); }, false, false)),
         h('div', { role: 'tablist', 'aria-label': '抖音设置分类', style: row }, ...Object.keys(fallbackCategories).map(name => h(Button, { key: name, role: 'tab', type: 'button', size: 'sm', variant: category === name ? 'primary' : 'outline', 'aria-selected': category === name, onClick: () => setCategory(name) }, name))),
         category === '基础设置' && h('div', null,
           section('抖音账号',
