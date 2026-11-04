@@ -631,13 +631,22 @@ export class BrowserController {
     if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
     this.page = page;
     const session = await page.context().newCDPSession(page);
+    let cleared = 0;
     try {
-      await session.send('Storage.clearDataForOrigin', { origin: 'https://www.douyin.com', storageTypes: 'all' });
+      // 登录 Cookie 常挂在 .douyin.com 父域，按 origin 清不一定生效；逐个删除 douyin 域 Cookie。
+      const { cookies } = await session.send('Network.getAllCookies');
+      for (const cookie of cookies || []) {
+        if (!/(^|\.)(douyin|iesdouyin)\.com$/.test(cookie.domain)) continue;
+        try { await session.send('Network.deleteCookies', { name: cookie.name, domain: cookie.domain, path: cookie.path }).catch(() => {}); cleared++; } catch {}
+      }
+      for (const origin of ['https://www.douyin.com', 'https://douyin.com']) {
+        await session.send('Storage.clearDataForOrigin', { origin, storageTypes: 'all' }).catch(() => {});
+      }
     } finally { await session.detach().catch(() => {}); }
     await page.goto('https://www.douyin.com/', { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch(() => {});
     await page.waitForTimeout(2500);
     const account = await this.accountState({ signal });
-    return { loggedOut: account.loggedIn !== true, loggedIn: account.loggedIn, message: account.loggedIn === true ? '退出登录未确认，请在专用窗口查看账号状态。' : '已退出抖音登录；重新登录请点“发送二维码到微信”或“打开登录页”。' };
+    return { loggedOut: account.loggedIn !== true, loggedIn: account.loggedIn, cleared, message: account.loggedIn === true ? '退出登录未确认，请在专用窗口查看账号状态。' : '已退出抖音登录；重新登录请点“发送二维码到微信”或“打开登录页”。' };
   }
   // 截取登录二维码：优先裁切登录框，找不到时退回整页截图；已登录时直接返回。
   async captureLoginQr({ signal } = {}) {
