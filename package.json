@@ -1,6 +1,6 @@
 {
   "name": "dsh-douyin-mac",
-  "version": "0.1.0",
+  "version": "0.1.9",
   "type": "module",
   "description": "macOS 版 DSH 抖音工具：Chrome 专用窗口驱动、人格记忆与自主观看",
   "license": "MIT",
@@ -19,7 +19,9 @@
     "douyin",
     "browser-automation",
     "persona",
-    "local-memory"
+    "local-memory",
+    "macos",
+    "google-chrome"
   ],
   "engines": {
     "node": ">=22.13",
@@ -150,5 +152,8 @@
       "optional": true
     }
   },
-  "private": true
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }
