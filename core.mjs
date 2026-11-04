@@ -698,6 +698,67 @@ export class BrowserController {
     const codeInput = await page.locator('input[placeholder*="验证码"]').count().catch(() => 0);
     return { opened, requested, phone, codeInput: codeInput > 0, buffer, message: codeInput > 0 ? `已进入验证码填写界面${phone ? `（${phone}）` : ''}；把收到的 6 位数字发给我即可。` : requested ? '已请求短信验证码；若页面仍停留在选项页，请手动点“接收短信验证码”。' : opened ? '已打开短信验证入口；如未收到验证码，点“获取验证码”再试。' : '没有找到“接收短信验证码”入口，请确认页面仍停留在身份验证。' };
   }
+  // 填写并提交短信验证码；只接受 4–8 位数字。用最上层的可见输入框，避免填到被验证层盖住的登录框。
+  async submitSmsCode(code, { signal } = {}) {
+    if (typeof code !== 'string' || !/^\d{4,8}$/.test(code.trim())) throw Object.assign(new Error('验证码必须是 4–8 位数字。'), { status: 400 });
+    const { page } = await this.locatablePage({ signal });
+    if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
+    this.page = page; await this._bringPageToFront(page);
+    const findTop = selectorText => page.evaluate(text => {
+      const hit = element => {
+        const rect = element.getBoundingClientRect();
+        if (rect.width < 20 || rect.height < 8) return null;
+        const top = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        if (!(top === element || element.contains(top))) return null;
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      };
+      if (text === null) {
+        for (const input of [...document.querySelectorAll('input')].filter(item => /验证码/.test(item.getAttribute('placeholder') || ''))) { const box = hit(input); if (box) return box; }
+        return null;
+      }
+      for (const element of [...document.querySelectorAll('button,div,span')].filter(item => (item.innerText || '').trim() === text)) { const box = hit(element); if (box) return box; }
+      return null;
+    }, selectorText).catch(() => null);
+    let inputBox = await findTop(null);
+    if (!inputBox) {
+      await this.beginSmsVerification({ signal });
+      inputBox = await findTop(null);
+    }
+    if (!inputBox) throw Object.assign(new Error('页面上没有找到可输入的验证码输入框，请确认仍在身份验证流程。'), { status: 409 });
+    await page.mouse.click(inputBox.x, inputBox.y);
+    await page.waitForTimeout(200);
+    await page.keyboard.press('Meta+A').catch(() => {});
+    await page.keyboard.press('Control+A').catch(() => {});
+    await page.keyboard.type(String(code).trim(), { delay: 30 });
+    await page.waitForTimeout(400);
+    let submitted = false;
+    const verifyBox = await findTop('验证');
+    if (verifyBox) { await page.mouse.click(verifyBox.x, verifyBox.y); submitted = true; }
+    if (!submitted) {
+      try { await page.keyboard.press('Enter'); submitted = true; } catch {}
+    }
+    await page.waitForTimeout(3500);
+    const bodyText = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ')).catch(() => '');
+    const pageError = (bodyText.match(/(?:验证码[^。；]{0,12}(?:错误|过期|失效|不正确)|操作频繁|请稍后重试)/) || [])[0] || '';
+    const account = await this.accountState({ signal });
+    return { submitted, pageError, loggedIn: account.loggedIn, verificationRequired: account.verificationRequired, message: account.loggedIn === true ? '验证码已提交，登录成功。' : pageError ? `提交未通过：${pageError}` : account.verificationRequired === true ? '验证码已提交，页面仍要求验证；请核对验证码或换一种验证方式。' : '验证码已提交，但登录状态尚未确认；稍后点“检查登录状态”核对。' };
+  }
+  // 打开“接收短信验证码”并请求验证码；不填码、不提交。用真实鼠标点击，避免只触发空的 JS click。
+  async beginSmsVerification({ signal } = {}) {
+    const { page } = await this.locatablePage({ signal });
+    if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
+    this.page = page; await this._bringPageToFront(page);
+    let opened = false, requested = false;
+    for (const label of ['接收短信验证码']) { if (await this._clickExactText(page, label).catch(() => false)) { opened = true; break; } }
+    await page.waitForTimeout(1800);
+    for (const label of ['获取验证码', '发送验证码', '获取', '重新发送']) { if (await this._clickExactText(page, label).catch(() => false)) { requested = true; break; } }
+    await page.waitForTimeout(1500);
+    const text = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ')).catch(() => '');
+    const phone = (text.match(/1\d{2}[\s*]{2,}\d{2,4}/) || [])[0] || null;
+    const buffer = await page.screenshot({ type: 'png', timeout: 20_000 }).catch(() => null);
+    const codeInput = await page.locator('input[placeholder*="验证码"]').count().catch(() => 0);
+    return { opened, requested, phone, codeInput: codeInput > 0, buffer, message: codeInput > 0 ? `已进入验证码填写界面${phone ? `（${phone}）` : ''}；把收到的 6 位数字发给我即可。` : requested ? '已请求短信验证码；若页面仍停留在选项页，请手动点“接收短信验证码”。' : opened ? '已打开短信验证入口；如未收到验证码，点“获取验证码”再试。' : '没有找到“接收短信验证码”入口，请确认页面仍停留在身份验证。' };
+  }
   // 填写并提交短信验证码；只接受 4–8 位数字。
   async submitSmsCode(code, { signal } = {}) {
     if (typeof code !== 'string' || !/^\d{4,8}$/.test(code.trim())) throw Object.assign(new Error('验证码必须是 4–8 位数字。'), { status: 400 });
