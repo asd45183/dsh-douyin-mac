@@ -667,23 +667,30 @@ export class BrowserController {
     if (closeBrowser) { try { browserClosed = (await this.closeDedicatedBrowser({ signal })).closed === true; } catch {} }
     return { loggedOut: true, loggedIn: false, cleared, browserClosed, message: browserClosed ? '已退出抖音登录并关闭专用浏览器；重新登录会重新打开。' : '已退出抖音登录；重新登录请点“获取登录二维码”或“发送二维码到微信”。' };
   }
+  // 按精确文字找到最深层可见元素并用真实鼠标点击；避免点到只有文字的外层容器。
+  async _clickExactText(page, label) {
+    const box = await page.evaluate(text => {
+      const usable = element => { const rect = element.getBoundingClientRect(), style = getComputedStyle(element); return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 && style.display !== 'none' && style.visibility !== 'hidden'; };
+      const matches = [...document.querySelectorAll('body *')].filter(element => usable(element) && (element.innerText || '').trim() === text);
+      matches.sort((a, b) => a.childElementCount - b.childElementCount);
+      const target = matches[0];
+      if (!target) return null;
+      const rect = target.getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    }, label).catch(() => null);
+    if (!box) return false;
+    await page.mouse.click(box.x, box.y);
+    return true;
+  }
   // 打开“接收短信验证码”并请求验证码；不填码、不提交。用真实鼠标点击，避免只触发空的 JS click。
   async beginSmsVerification({ signal } = {}) {
     const { page } = await this.locatablePage({ signal });
     if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
     this.page = page; await this._bringPageToFront(page);
     let opened = false, requested = false;
-    const option = page.getByText('接收短信验证码', { exact: true }).first();
-    if (await option.count().catch(() => 0)) {
-      try { await option.click({ timeout: 8000 }); opened = true; }
-      catch { try { await option.click({ force: true, timeout: 5000 }); opened = true; } catch {} }
-    }
+    for (const label of ['接收短信验证码']) { if (await this._clickExactText(page, label).catch(() => false)) { opened = true; break; } }
     await page.waitForTimeout(1800);
-    const requestButton = page.getByText(/^(?:获取验证码|发送验证码|获取)$/).first();
-    if (await requestButton.count().catch(() => 0)) {
-      try { await requestButton.click({ timeout: 6000 }); requested = true; }
-      catch { try { await requestButton.click({ force: true, timeout: 4000 }); requested = true; } catch {} }
-    }
+    for (const label of ['获取验证码', '发送验证码', '获取', '重新发送']) { if (await this._clickExactText(page, label).catch(() => false)) { requested = true; break; } }
     await page.waitForTimeout(1500);
     const text = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ')).catch(() => '');
     const phone = (text.match(/1\d{2}[\s*]{2,}\d{2,4}/) || [])[0] || null;
@@ -705,15 +712,24 @@ export class BrowserController {
     if (!await input.count().catch(() => 0)) throw Object.assign(new Error('页面上没有找到验证码输入框，请确认仍在身份验证流程。'), { status: 409 });
     await input.fill(String(code).trim());
     await page.waitForTimeout(400);
+    const typed = await input.inputValue().catch(() => '');
     let submitted = false;
-    for (const name of [/^(?:验证|提交|确定|下一步)$/, /^登录$/]) {
-      const button = page.getByText(name).first();
-      if (!await button.count().catch(() => 0)) continue;
-      try { await button.click({ timeout: 6000 }); submitted = true; break; } catch { try { await button.click({ force: true, timeout: 4000 }); submitted = true; break; } catch {} }
+    const verifyButton = page.getByRole('button', { name: '验证', exact: true }).first();
+    if (await verifyButton.count().catch(() => 0)) {
+      try { await verifyButton.click({ timeout: 6000 }); submitted = true; } catch { try { await verifyButton.click({ force: true, timeout: 4000 }); submitted = true; } catch {} }
     }
-    await page.waitForTimeout(3500);
+    if (!submitted) {
+      for (const name of [/^(?:提交|确定|下一步)$/, /^登录$/]) {
+        const button = page.getByText(name).first();
+        if (!await button.count().catch(() => 0)) continue;
+        try { await button.click({ timeout: 6000 }); submitted = true; break; } catch { try { await button.click({ force: true, timeout: 4000 }); submitted = true; break; } catch {} }
+      }
+    }
+    await page.waitForTimeout(3000);
+    const bodyText = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ')).catch(() => '');
+    const pageError = (bodyText.match(/(?:验证码[^。；]{0,12}(?:错误|过期|失效|不正确)|操作频繁|请稍后重试|验证码已发送)/) || [])[0] || '';
     const account = await this.accountState({ signal });
-    return { submitted, loggedIn: account.loggedIn, verificationRequired: account.verificationRequired, message: account.loggedIn === true ? '验证码已提交，登录成功。' : account.verificationRequired === true ? '验证码已提交，页面仍要求验证；请核对验证码或换一种验证方式。' : '验证码已提交，但登录状态尚未确认；稍后点“检查登录状态”核对。' };
+    return { submitted, typed, pageError, loggedIn: account.loggedIn, verificationRequired: account.verificationRequired, message: account.loggedIn === true ? '验证码已提交，登录成功。' : pageError ? `提交未通过：${pageError}` : account.verificationRequired === true ? '验证码已提交，页面仍要求验证；请核对验证码或换一种验证方式。' : '验证码已提交，但登录状态尚未确认；稍后点“检查登录状态”核对。' };
   }
   // 截取登录二维码：优先裁切登录框，找不到时退回整页截图；已登录时直接返回。
   async captureLoginQr({ signal } = {}) {
