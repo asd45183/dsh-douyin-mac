@@ -6,7 +6,7 @@ window.__ModuleLoader__.load({
     const { createElement: h, useEffect, useRef, useState } = React;
     const Button = primitives.Button, Input = primitives.Input || 'input';
     const PREFIX = '/api/douyin-browser';
-    const routes = new Set(['/interactions/configure', '/state', '/diagnostics', '/diagnostics/repair', '/watch/schedule', '/watch/options', '/video/configure', '/video/start', '/video/stop', '/browser/open', '/account/state', '/account/login', '/account/qr', '/persona/configure', '/model/configure', '/mode/configure', '/watch/start', '/watch/stop', '/spark/configure', '/spark/start', '/spark/stop', '/spark/resolve', '/comments/configure', '/comments/resolve', '/share/configure', '/share/resolve', '/chat/contacts', '/chat/configure', '/chat/start', '/chat/stop', '/chat/prepare', '/chat/resolve', '/chat/unanswered', '/chat/unanswered/resolve', '/media/configure', '/media/credentials', '/reports/generate']);
+    const routes = new Set(['/interactions/configure', '/state', '/diagnostics', '/diagnostics/repair', '/watch/schedule', '/watch/options', '/video/configure', '/video/start', '/video/stop', '/browser/open', '/account/state', '/account/login', '/account/logout', '/account/qr', '/persona/configure', '/model/configure', '/mode/configure', '/watch/start', '/watch/stop', '/spark/configure', '/spark/start', '/spark/stop', '/spark/resolve', '/comments/configure', '/comments/resolve', '/share/configure', '/share/resolve', '/chat/contacts', '/chat/configure', '/chat/start', '/chat/stop', '/chat/prepare', '/chat/resolve', '/chat/unanswered', '/chat/unanswered/resolve', '/media/configure', '/media/credentials', '/reports/generate']);
     const column = { display: 'flex', flexDirection: 'column', gap: 12 };
     const row = { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' };
     const muted = { color: 'var(--dsw-alias-label-tertiary)', fontSize: 13, margin: 0 };
@@ -193,6 +193,7 @@ window.__ModuleLoader__.load({
             note('登录态保存在本机专用 Chrome 资料目录（~/.dsh/douyin-browser/cli-profile）。换账号请在 Chrome 右上角头像退出登录，再重新扫码；不会影响人格与记忆。'),
             h('div', { style: row },
               button('检查登录状态', 'accountCheck', () => { void perform('accountCheck', async () => { const value = await api.request('/account/state'); setAccount(value); return value; }); }),
+              button('退出登录', 'accountLogout', () => { if (!globalThis.confirm?.('确认退出抖音登录？退出后需要重新扫码。')) return; void perform('accountLogout', async () => { const value = await api.request('/account/logout', {}); setAccount(previous => ({ ...(previous || {}), ...value, note: value.message || previous?.note })); return value; }); }, false, false),
               button('发送二维码到微信', 'accountQr', () => { void perform('accountQr', async () => { const value = await api.request('/account/qr', {}); setAccount(previous => ({ ...(previous || {}), ...value, note: value.message || previous?.note })); return value; }); }, false, false),
               button('打开登录页', 'accountLogin', () => { void perform('accountLogin', async () => { const value = await api.request('/account/login'); setAccount(previous => ({ ...(previous || {}), ...value })); return value; }); }, false, false),
             ),

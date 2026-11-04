@@ -64,6 +64,7 @@ export function createNativeSettingsRoute({ getController, getComments, getRepor
         case '/video/stop': empty(input); value = controller.limits().endSession({ explicit: true }); await controller.pauseForLimits?.(); break;
         case '/browser/open': empty(input); value = await controller.openBrowser(); break;
         case '/account/login': empty(input); value = await controller.openLogin(); break;
+        case '/account/logout': empty(input); value = await controller.logoutDouyin(); break;
         case '/account/qr': { empty(input); if (typeof pushLoginQr !== 'function') throw Object.assign(new Error('当前宿主没有二维码推送通道。'), { status: 409 }); value = await pushLoginQr({}); break; }
         case '/persona/configure': {
           if (Object.keys(input).some(key => !['content', 'expectedRevision'].includes(key))) throw Object.assign(new Error('人格设置只接收正文和读取版本。'), { status: 400 });

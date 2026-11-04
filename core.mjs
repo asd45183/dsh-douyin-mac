@@ -625,6 +625,20 @@ export class BrowserController {
     const state = await page.evaluate(readPageState).catch(() => ({}));
     return { opened: true, clicked, loginRequired: state.loginRequired === true, verificationRequired: state.verificationRequired === true, message: clicked ? '已打开登录入口，请在本机专用 Chrome 中扫码登录。' : '已打开抖音首页；若没有登录框，请点右上角“登录”后扫码。' };
   }
+  // 退出抖音登录：只清理 douyin.com 这个源的 Cookie/本地存储，再刷新页面；不删除专用资料目录。
+  async logoutDouyin({ signal } = {}) {
+    const { page } = await this.locatablePage({ signal });
+    if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
+    this.page = page;
+    const session = await page.context().newCDPSession(page);
+    try {
+      await session.send('Storage.clearDataForOrigin', { origin: 'https://www.douyin.com', storageTypes: 'all' });
+    } finally { await session.detach().catch(() => {}); }
+    await page.goto('https://www.douyin.com/', { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch(() => {});
+    await page.waitForTimeout(2500);
+    const account = await this.accountState({ signal });
+    return { loggedOut: account.loggedIn !== true, loggedIn: account.loggedIn, message: account.loggedIn === true ? '退出登录未确认，请在专用窗口查看账号状态。' : '已退出抖音登录；重新登录请点“发送二维码到微信”或“打开登录页”。' };
+  }
   // 截取登录二维码：优先裁切登录框，找不到时退回整页截图；已登录时直接返回。
   async captureLoginQr({ signal } = {}) {
     let { page } = await this.locatablePage({ signal });
