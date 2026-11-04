@@ -714,7 +714,11 @@ export class BrowserController {
     await page.waitForTimeout(400);
     const typed = await input.inputValue().catch(() => '');
     let submitted = false;
+    // 先用回车提交（表单默认行为），不行再点“验证”按钮。
+    try { await input.press('Enter'); await page.waitForTimeout(1200); } catch {}
+    const stillTyped = await input.inputValue().catch(() => '');
     const verifyButton = page.getByRole('button', { name: '验证', exact: true }).first();
+    if (stillTyped.trim() !== '') submitted = false; else submitted = true;
     if (await verifyButton.count().catch(() => 0)) {
       try { await verifyButton.click({ timeout: 6000 }); submitted = true; } catch { try { await verifyButton.click({ force: true, timeout: 4000 }); submitted = true; } catch {} }
     }
