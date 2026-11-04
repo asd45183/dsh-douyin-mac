@@ -126,7 +126,7 @@ export async function runBrowserHost({ profile, controlDir, port, chromiumImpl =
     try { installation = await probeInstallation(); } catch {}
     context = await chromiumImpl.launchPersistentContext(profile, {
       channel: 'chrome', headless: false, viewport: null, ignoreDefaultArgs: ['--mute-audio'],
-      args: [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1', '--autoplay-policy=no-user-gesture-required'],
+      args: [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1', '--autoplay-policy=no-user-gesture-required', '--hide-crash-restore-bubble', '--no-first-run', '--no-default-browser-check'],
     });
     const nativeFocus = await installNativeFocusReset(context, { onFailure: error => {
       focusFailed = true;
