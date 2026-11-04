@@ -1,3 +1,7 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { interactionStatus } from './interaction-status.mjs';
 import { SETTINGS_SECTIONS } from './settings-sections.mjs';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -8,6 +12,8 @@ import { DiagnosticsService } from './diagnostics.mjs?v=18';
 import { resolveRuntimePaths } from './runtime-paths.mjs';
 
 const PREFIX = '/api/douyin-browser';
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
 const send = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }); res.end(JSON.stringify(body)); };
 async function body(req) {
   if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) throw Object.assign(new Error('只接收JSON设置。'), { status: 400 });
@@ -68,6 +74,21 @@ export function createNativeSettingsRoute({ getController, getComments, getRepor
         case '/account/logout': { if (Object.keys(input).some(key => key !== 'closeBrowser') || (input.closeBrowser !== undefined && typeof input.closeBrowser !== 'boolean')) throw Object.assign(new Error('退出登录只接受 closeBrowser 布尔值。'), { status: 400 }); value = await controller.logoutDouyin({ closeBrowser: input.closeBrowser !== false }); break; }
         case '/account/verification/request': { empty(input); const sms = await controller.beginSmsVerification(); const { buffer, ...rest } = sms; void buffer; value = rest; break; }
         case '/account/verification/submit': { if (Object.keys(input).some(key => key !== 'code')) throw Object.assign(new Error('验证码提交只接收 code。'), { status: 400 }); value = await controller.submitSmsCode(input.code); break; }
+        case '/profile/edit': {
+          if (Object.keys(input).some(key => !['nickname', 'bio', 'avatar', 'apply'].includes(key))) throw Object.assign(new Error('资料编辑只接收昵称、简介、头像路径和是否保存。'), { status: 400 });
+          if (input.nickname !== undefined && (typeof input.nickname !== 'string' || input.nickname.length > 20)) throw Object.assign(new Error('昵称必须是 1–20 个字符。'), { status: 400 });
+          if (input.bio !== undefined && (typeof input.bio !== 'string' || input.bio.length > 200)) throw Object.assign(new Error('简介最多 200 个字符。'), { status: 400 });
+          if (input.avatar !== undefined && (typeof input.avatar !== 'string' || input.avatar.length > 500 || !/^\//.test(input.avatar))) throw Object.assign(new Error('头像必须是本机绝对路径。'), { status: 400 });
+          if (!String(input.nickname ?? '').trim() && !String(input.bio ?? '').trim()) throw Object.assign(new Error('至少填写昵称或简介。'), { status: 400 });
+          const argv = [path.join(ROOT, 'scripts/profile-edit.mjs')];
+          if (input.nickname !== undefined) argv.push('--nickname', String(input.nickname));
+          if (input.bio !== undefined) argv.push('--bio', String(input.bio));
+          if (input.avatar !== undefined) argv.push('--avatar', String(input.avatar));
+          if (input.apply === true) argv.push('--apply');
+          const { stdout } = await execFileAsync(process.execPath, argv, { timeout: 140_000, maxBuffer: 1_000_000 });
+          value = JSON.parse(String(stdout).trim() || '{}');
+          break;
+        }
         case '/account/qr/capture': { empty(input); const shot = await controller.captureLoginQr(); value = shot.alreadyLoggedIn ? { alreadyLoggedIn: true, message: shot.message } : { imageDataUrl: `data:image/png;base64,${shot.buffer.toString('base64')}`, kind: shot.kind, at: Date.now(), message: shot.message }; break; }
         case '/account/qr': { empty(input); if (typeof pushLoginQr !== 'function') throw Object.assign(new Error('当前宿主没有二维码推送通道。'), { status: 409 }); value = await pushLoginQr({}); break; }
         case '/persona/configure': {

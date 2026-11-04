@@ -1,6 +1,6 @@
 # DSH 抖音助手（macOS / Chrome 版）
 
-0.1.12 说明。本项目基于上游 [dsh-douyin-agent](https://github.com/LockyBee/dsh-douyin-agent) 1.4.6 源码，移植为 **macOS 上只运行 Google Chrome 的 DSH 插件形态**；不包含 Windows 独立软件。人格、兴趣、观看用量、许可名单和日报沿用原实现。
+0.1.13 说明。本项目基于上游 [dsh-douyin-agent](https://github.com/LockyBee/dsh-douyin-agent) 1.4.6 源码，移植为 **macOS 上只运行 Google Chrome 的 DSH 插件形态**；不包含 Windows 独立软件。人格、兴趣、观看用量、许可名单和日报沿用原实现。
 
 在本机专用 Google Chrome 中浏览抖音电脑版，采样真实画面交给模型，按人格和实际观看行为更新兴趣。这是第三方适配，不是 DeepSeek 官方发行版。
 
@@ -40,12 +40,34 @@
 需要 macOS、Google Chrome、Node.js 22.13+ 和兼容的 DSH（`engines.dsh` 以 `package.json` 为准）。从 npm 安装到 web profile：
 
 ```sh
-dsh plugin --profile web add dsh-douyin-mac@0.1.12
+dsh plugin --profile web add dsh-douyin-mac@0.1.13
 ```
 
 本地开发也可以从源码目录安装（`npm install` 后 `dsh plugin --profile web add .`），两种方式不要同时用。
 
 插件通过 Playwright 启动**独立资料目录**的 Chrome 并连接本机 CDP；Chrome 136 起默认资料目录不允许开远程调试，专用目录已规避该限制。DSH 配置变化后重启同一份 DSH 即生效。
+
+## 个人资料（昵称 / 简介 / 头像）
+
+插件自带一个资料编辑脚本，默认**预演**，只有显式 `--apply` 才会保存：
+
+```sh
+cd dsh-douyin-mac
+
+# 预演：只填入/预览，不保存
+node scripts/profile-edit.mjs --nickname "新昵称" --bio "新简介"
+
+# 保存（昵称 ≤20 字，简介 ≤200 字）
+node scripts/profile-edit.mjs --nickname "新昵称" --bio "新简介" --apply
+
+# 换头像（png/jpg/webp/bmp），保存后进入平台审核
+node scripts/profile-edit.mjs --avatar /绝对路径/avatar.png --apply
+```
+
+- 脚本通过本机 9227 端口操作专用 Chrome，需要先在插件里“打开抖音”
+- 修改资料可能触发抖音**短信身份验证**；脚本会提示需要验证码，不会误报成功
+- 头像保存后显示“审核通过后展示”，审核期间资料页可能仍是旧图
+- 设置页“抖音账号 → 编辑个人资料”也提供昵称/简介/头像路径入口（预演 + 二次确认保存）
 
 ## 第一次使用
 
