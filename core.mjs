@@ -625,8 +625,23 @@ export class BrowserController {
     const state = await page.evaluate(readPageState).catch(() => ({}));
     return { opened: true, clicked, loginRequired: state.loginRequired === true, verificationRequired: state.verificationRequired === true, message: clicked ? '已打开登录入口，请在本机专用 Chrome 中扫码登录。' : '已打开抖音首页；若没有登录框，请点右上角“登录”后扫码。' };
   }
+  // 关闭专用浏览器（CDP Browser.close），不删除资料目录；下次打开会重新启动。
+  async closeDedicatedBrowser({ signal } = {}) {
+    const browser = await this.connectExistingBrowser({ signal });
+    if (!browser) return { closed: false, message: '专用浏览器未运行。' };
+    try {
+      const session = await browser.newBrowserCDPSession();
+      try { await session.send('Browser.close').catch(() => {}); } finally { await session.detach().catch(() => {}); }
+    } catch {}
+    this.browser = null; this.page = null;
+    for (let attempt = 0; attempt < 24; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      if (!await version()) break;
+    }
+    return { closed: !(await version()), message: '专用浏览器已关闭；下次打开抖音会重新启动。' };
+  }
   // 退出抖音登录：只清理 douyin.com 这个源的 Cookie/本地存储，再刷新页面；不删除专用资料目录。
-  async logoutDouyin({ signal } = {}) {
+  async logoutDouyin({ signal, closeBrowser = true } = {}) {
     const { page } = await this.locatablePage({ signal });
     if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
     this.page = page;
@@ -646,7 +661,10 @@ export class BrowserController {
     await page.goto('https://www.douyin.com/', { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch(() => {});
     await page.waitForTimeout(2500);
     const account = await this.accountState({ signal });
-    return { loggedOut: account.loggedIn !== true, loggedIn: account.loggedIn, cleared, message: account.loggedIn === true ? '退出登录未确认，请在专用窗口查看账号状态。' : '已退出抖音登录；重新登录请点“发送二维码到微信”或“打开登录页”。' };
+    if (account.loggedIn === true) return { loggedOut: false, loggedIn: true, cleared, message: '退出登录未确认，请在专用窗口查看账号状态。' };
+    let browserClosed = false;
+    if (closeBrowser) { try { browserClosed = (await this.closeDedicatedBrowser({ signal })).closed === true; } catch {} }
+    return { loggedOut: true, loggedIn: false, cleared, browserClosed, message: browserClosed ? '已退出抖音登录并关闭专用浏览器；重新登录会重新打开。' : '已退出抖音登录；重新登录请点“获取登录二维码”或“发送二维码到微信”。' };
   }
   // 截取登录二维码：优先裁切登录框，找不到时退回整页截图；已登录时直接返回。
   async captureLoginQr({ signal } = {}) {
