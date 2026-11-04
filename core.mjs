@@ -667,6 +667,54 @@ export class BrowserController {
     if (closeBrowser) { try { browserClosed = (await this.closeDedicatedBrowser({ signal })).closed === true; } catch {} }
     return { loggedOut: true, loggedIn: false, cleared, browserClosed, message: browserClosed ? '已退出抖音登录并关闭专用浏览器；重新登录会重新打开。' : '已退出抖音登录；重新登录请点“获取登录二维码”或“发送二维码到微信”。' };
   }
+  // 打开“接收短信验证码”并请求验证码；不填码、不提交。用真实鼠标点击，避免只触发空的 JS click。
+  async beginSmsVerification({ signal } = {}) {
+    const { page } = await this.locatablePage({ signal });
+    if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
+    this.page = page; await this._bringPageToFront(page);
+    let opened = false, requested = false;
+    const option = page.getByText('接收短信验证码', { exact: true }).first();
+    if (await option.count().catch(() => 0)) {
+      try { await option.click({ timeout: 8000 }); opened = true; }
+      catch { try { await option.click({ force: true, timeout: 5000 }); opened = true; } catch {} }
+    }
+    await page.waitForTimeout(1800);
+    const requestButton = page.getByText(/^(?:获取验证码|发送验证码|获取)$/).first();
+    if (await requestButton.count().catch(() => 0)) {
+      try { await requestButton.click({ timeout: 6000 }); requested = true; }
+      catch { try { await requestButton.click({ force: true, timeout: 4000 }); requested = true; } catch {} }
+    }
+    await page.waitForTimeout(1500);
+    const text = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ')).catch(() => '');
+    const phone = (text.match(/1\d{2}[\s*]{2,}\d{2,4}/) || [])[0] || null;
+    const buffer = await page.screenshot({ type: 'png', timeout: 20_000 }).catch(() => null);
+    const codeInput = await page.locator('input[placeholder*="验证码"]').count().catch(() => 0);
+    return { opened, requested, phone, codeInput: codeInput > 0, buffer, message: codeInput > 0 ? `已进入验证码填写界面${phone ? `（${phone}）` : ''}；把收到的 6 位数字发给我即可。` : requested ? '已请求短信验证码；若页面仍停留在选项页，请手动点“接收短信验证码”。' : opened ? '已打开短信验证入口；如未收到验证码，点“获取验证码”再试。' : '没有找到“接收短信验证码”入口，请确认页面仍停留在身份验证。' };
+  }
+  // 填写并提交短信验证码；只接受 4–8 位数字。
+  async submitSmsCode(code, { signal } = {}) {
+    if (typeof code !== 'string' || !/^\d{4,8}$/.test(code.trim())) throw Object.assign(new Error('验证码必须是 4–8 位数字。'), { status: 400 });
+    const { page } = await this.locatablePage({ signal });
+    if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
+    this.page = page; await this._bringPageToFront(page);
+    let input = page.locator('input[placeholder*="验证码"]').first();
+    if (!await input.count().catch(() => 0)) {
+      await this.beginSmsVerification({ signal });
+      input = page.locator('input[placeholder*="验证码"]').first();
+    }
+    if (!await input.count().catch(() => 0)) throw Object.assign(new Error('页面上没有找到验证码输入框，请确认仍在身份验证流程。'), { status: 409 });
+    await input.fill(String(code).trim());
+    await page.waitForTimeout(400);
+    let submitted = false;
+    for (const name of [/^(?:验证|提交|确定|下一步)$/, /^登录$/]) {
+      const button = page.getByText(name).first();
+      if (!await button.count().catch(() => 0)) continue;
+      try { await button.click({ timeout: 6000 }); submitted = true; break; } catch { try { await button.click({ force: true, timeout: 4000 }); submitted = true; break; } catch {} }
+    }
+    await page.waitForTimeout(3500);
+    const account = await this.accountState({ signal });
+    return { submitted, loggedIn: account.loggedIn, verificationRequired: account.verificationRequired, message: account.loggedIn === true ? '验证码已提交，登录成功。' : account.verificationRequired === true ? '验证码已提交，页面仍要求验证；请核对验证码或换一种验证方式。' : '验证码已提交，但登录状态尚未确认；稍后点“检查登录状态”核对。' };
+  }
   // 截取登录二维码：优先裁切登录框，找不到时退回整页截图；已登录时直接返回。
   async captureLoginQr({ signal } = {}) {
     let { page } = await this.locatablePage({ signal });
@@ -912,6 +960,8 @@ export class BrowserController {
       }
       if(name.startsWith('douyin_chat_')) {
         const chat=await this.getChatService();aborted(signal);
+        if (name === 'douyin_request_sms') return this.beginSmsVerification({ signal });
+        if (name === 'douyin_submit_sms') return this.submitSmsCode(args.code, { signal });
         if(name==='douyin_chat_contacts') return chat.listContacts({signal});
         if(name==='douyin_chat_status') return chat.state();
         if(name==='douyin_chat_start') return chat.start({signal});

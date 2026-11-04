@@ -23,6 +23,12 @@ export const TOOL_DEFINITIONS = [
   { name: 'douyin_next', description: '切换到下一条抖音视频，并返回切换后的状态。', parameters: empty() },
   { name: 'douyin_previous', description: '切换到上一条抖音视频，并返回切换后的状态。', parameters: empty() },
   { name: 'douyin_status', description: '读取抖音当前页面、可见文字与播放状态。文字不能代替视频画面内容。', parameters: empty() },
+  { name: 'douyin_request_sms', description: '抖音出现身份验证时，打开“接收短信验证码”并请求短信验证码，返回绑定的手机掩码；不会填写或提交验证码。', parameters: empty() },
+  {
+    name: 'douyin_submit_sms',
+    description: '用户把收到的抖音短信验证码发来后，填入专用浏览器并提交；只接受 4–8 位数字。',
+    parameters: { type: 'object', properties: { code: { type: 'string', minLength: 4, maxLength: 8, description: '用户收到的短信验证码。' } }, required: ['code'], additionalProperties: false },
+  },
   {
     name: 'douyin_observe',
     description: '观察当前视频一小段时间，采集画面和播放状态。只有支持图像输入的模型才能理解画面。',

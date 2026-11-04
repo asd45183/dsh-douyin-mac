@@ -6,7 +6,7 @@ window.__ModuleLoader__.load({
     const { createElement: h, useEffect, useRef, useState } = React;
     const Button = primitives.Button, Input = primitives.Input || 'input';
     const PREFIX = '/api/douyin-browser';
-    const routes = new Set(['/interactions/configure', '/state', '/diagnostics', '/diagnostics/repair', '/watch/schedule', '/watch/options', '/video/configure', '/video/start', '/video/stop', '/browser/open', '/browser/close', '/account/state', '/account/login', '/account/logout', '/account/qr', '/account/qr/capture', '/persona/configure', '/model/configure', '/mode/configure', '/watch/start', '/watch/stop', '/spark/configure', '/spark/start', '/spark/stop', '/spark/resolve', '/comments/configure', '/comments/resolve', '/share/configure', '/share/resolve', '/chat/contacts', '/chat/configure', '/chat/start', '/chat/stop', '/chat/prepare', '/chat/resolve', '/chat/unanswered', '/chat/unanswered/resolve', '/media/configure', '/media/credentials', '/reports/generate']);
+    const routes = new Set(['/interactions/configure', '/state', '/diagnostics', '/diagnostics/repair', '/watch/schedule', '/watch/options', '/video/configure', '/video/start', '/video/stop', '/browser/open', '/browser/close', '/account/state', '/account/login', '/account/logout', '/account/qr', '/account/qr/capture', '/account/verification/request', '/account/verification/submit', '/persona/configure', '/model/configure', '/mode/configure', '/watch/start', '/watch/stop', '/spark/configure', '/spark/start', '/spark/stop', '/spark/resolve', '/comments/configure', '/comments/resolve', '/share/configure', '/share/resolve', '/chat/contacts', '/chat/configure', '/chat/start', '/chat/stop', '/chat/prepare', '/chat/resolve', '/chat/unanswered', '/chat/unanswered/resolve', '/media/configure', '/media/credentials', '/reports/generate']);
     const column = { display: 'flex', flexDirection: 'column', gap: 12 };
     const row = { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' };
     const muted = { color: 'var(--dsw-alias-label-tertiary)', fontSize: 13, margin: 0 };
@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState(null), [ready, setReady] = useState(false), [connectionError, setConnectionError] = useState(''), [notice, setNotice] = useState(''), [category, setCategory] = useState('基础设置');
       const [operationErrors, setOperationErrors] = useState({});
       const [busy, setBusy] = useState(new Set()), [contacts, setContacts] = useState(null), [discovery, setDiscovery] = useState(null), [diagnostics, setDiagnostics] = useState(null), [repairResult, setRepairResult] = useState(''), [report, setReport] = useState(null), [reportDate, setReportDate] = useState('');
-      const [credentials, setCredentials] = useState({ mimo: '', minimax: '' }), [keyStatus, setKeyStatus] = useState({}), [reviews, setReviews] = useState(new Set()), [account, setAccount] = useState(null), [qrImage, setQrImage] = useState(''), [confirming, setConfirming] = useState('');
+      const [credentials, setCredentials] = useState({ mimo: '', minimax: '' }), [keyStatus, setKeyStatus] = useState({}), [reviews, setReviews] = useState(new Set()), [account, setAccount] = useState(null), [qrImage, setQrImage] = useState(''), [confirming, setConfirming] = useState(''), [smsCode, setSmsCode] = useState('');
       const existingAuthorization = useRef(false); const alive = useRef(true), refreshing = useRef(null), refreshAgain = useRef(false), locks = useRef(new Set()), submitted = useRef(new Set()), keyValues = useRef(credentials);
       const active = value => value?.running || value?.starting || value?.busy || value?.worker?.alive;
       const operationActive = active(state?.watch) || state?.chat?.starting || state?.chat?.busy || state?.share?.busy;
@@ -205,6 +205,14 @@ window.__ModuleLoader__.load({
               button(confirming === 'accountLogout' ? '确认退出登录' : '退出登录', 'accountLogout', () => { if (confirming !== 'accountLogout') { setConfirming('accountLogout'); setNotice('再点一次“确认退出登录”执行；退出后需要重新扫码。'); setTimeout(() => setConfirming(current => current === 'accountLogout' ? '' : current), 6000); return; } setConfirming(''); void perform('accountLogout', async () => { const value = await api.request('/account/logout', {}); setAccount(previous => ({ ...(previous || {}), ...value, note: value.message || previous?.note })); return value; }); }, false, false),
               button('发送二维码到微信', 'accountQr', () => { void perform('accountQr', async () => { const value = await api.request('/account/qr', {}); setAccount(previous => ({ ...(previous || {}), ...value, note: value.message || previous?.note })); return value; }); }, false, false),
               button('打开登录页', 'accountLogin', () => { void perform('accountLogin', async () => { const value = await api.request('/account/login'); setAccount(previous => ({ ...(previous || {}), ...value })); return value; }); }, false, false),
+            ),
+            account?.verificationRequired && h('div', { style: column },
+              note('抖音要求身份验证：点“发送短信验证码”，把手机收到的 6 位数字填在下面提交；也可以直接在微信里回复数字，由我填入。'),
+              h('div', { style: row },
+                button('发送短信验证码', 'smsRequest', () => { void perform('smsRequest', async () => { const value = await api.request('/account/verification/request', {}); setAccount(previous => ({ ...(previous || {}), ...value, note: value.message || previous?.note })); return value; }); }, false, false),
+                h('input', { value: smsCode, onChange: event => setSmsCode(event.target.value.replace(/\D/g, '').slice(0, 8)), placeholder: '6 位验证码', maxLength: 8, 'aria-label': '短信验证码', style: formControl }),
+                button('提交验证码', 'smsSubmit', () => { void perform('smsSubmit', async () => { const value = await api.request('/account/verification/submit', { code: smsCode }); setAccount(previous => ({ ...(previous || {}), ...value, note: value.message || previous?.note })); setSmsCode(''); return value; }); }, false, false),
+              ),
             ),
             qrImage && h('div', { style: column }, h('img', { src: qrImage, alt: '抖音登录二维码', style: { width: 220, height: 220, imageRendering: 'pixelated', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8, background: '#fff' } }), note('用抖音 App 扫一扫扫描；二维码约 2 分钟过期，过期后重新点“获取登录二维码”。')),
             account?.message && note(account.message),

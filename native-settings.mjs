@@ -66,6 +66,8 @@ export function createNativeSettingsRoute({ getController, getComments, getRepor
         case '/browser/close': empty(input); value = await controller.closeDedicatedBrowser(); break;
         case '/account/login': empty(input); value = await controller.openLogin(); break;
         case '/account/logout': { if (Object.keys(input).some(key => key !== 'closeBrowser') || (input.closeBrowser !== undefined && typeof input.closeBrowser !== 'boolean')) throw Object.assign(new Error('退出登录只接受 closeBrowser 布尔值。'), { status: 400 }); value = await controller.logoutDouyin({ closeBrowser: input.closeBrowser !== false }); break; }
+        case '/account/verification/request': { empty(input); const sms = await controller.beginSmsVerification(); const { buffer, ...rest } = sms; void buffer; value = rest; break; }
+        case '/account/verification/submit': { if (Object.keys(input).some(key => key !== 'code')) throw Object.assign(new Error('验证码提交只接收 code。'), { status: 400 }); value = await controller.submitSmsCode(input.code); break; }
         case '/account/qr/capture': { empty(input); const shot = await controller.captureLoginQr(); value = shot.alreadyLoggedIn ? { alreadyLoggedIn: true, message: shot.message } : { imageDataUrl: `data:image/png;base64,${shot.buffer.toString('base64')}`, kind: shot.kind, at: Date.now(), message: shot.message }; break; }
         case '/account/qr': { empty(input); if (typeof pushLoginQr !== 'function') throw Object.assign(new Error('当前宿主没有二维码推送通道。'), { status: 409 }); value = await pushLoginQr({}); break; }
         case '/persona/configure': {

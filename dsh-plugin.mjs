@@ -191,15 +191,19 @@ export async function apply(ctx, config = {}) {
   const pushLoginQr = async ({ reason = '', auto = false } = {}) => {
     if (auto && Date.now() - lastQrPushAt < 60_000) return { sent: false, reason: '刚刚发送过二维码，请稍后重试。' };
     const controller = await getController();
-    const shot = await controller.captureLoginQr();
+    let shot = await controller.captureLoginQr();
     if (shot.alreadyLoggedIn) return { sent: false, reason: '当前已登录，无需二维码。' };
+    let smsMessage = '';
+    if (shot.kind === 'verification') {
+      try { const sms = await controller.beginSmsVerification(); if (sms?.buffer) shot = { ...shot, buffer: sms.buffer }; smsMessage = sms?.message || ''; } catch {}
+    }
     const stateDir = controller.limits().stateDir;
     fs.mkdirSync(stateDir, { recursive: true });
     const file = path.join(stateDir, 'login-qr.png');
     fs.writeFileSync(file, shot.buffer, { mode: 0o600 });
     const push = optionalService(ctx, 'weixinPush');
     if (!push?.toOwner) return { sent: false, file, message: '微信插件未提供推送服务，二维码已保存在本机。' };
-    const result = await push.toOwner({ text: reason || (shot.kind === 'verification' ? '抖音要求身份验证（短信或登录密码），扫码无法绕过；请在专用 Chrome 完成验证。' : '抖音需要重新登录，请在 2 分钟内扫码（保存图片后可在抖音扫一扫里选相册）。'), imagePath: file });
+    const result = await push.toOwner({ text: reason || (shot.kind === 'verification' ? `抖音要求身份验证。${smsMessage || '已打开短信验证入口。'} 收到 6 位验证码后直接在微信回复数字即可自动填入。` : '抖音需要重新登录，请在 2 分钟内扫码（保存图片后可在抖音扫一扫里选相册）。'), imagePath: file });
     if (result?.ok === true) { lastQrPushAt = Date.now(); return { sent: true, file, message: `已发送到微信（${result.target || '本人会话'}）。` }; }
     return { sent: false, file, message: result?.error || '微信发送失败。' };
   };
