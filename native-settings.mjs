@@ -31,6 +31,7 @@ export function createNativeSettingsRoute({ getController, getComments, getRepor
       const controller = await getController();
       const stateDir = controller.limits().stateDir ?? resolveRuntimePaths().stateDir, usageLedger = new UsageLedger({ stateDir }), optionsService = new WatchOptions({ stateDir });
       if (!url.pathname.startsWith(`${PREFIX}/diagnostics`)) for (const getter of [getChat]) if (getter) { const service = await getter(); if (service.agent) { service.agent.usageLedger = usageLedger; service.agent.source = 'dsh'; } }
+      if (req.method === 'GET' && url.pathname === `${PREFIX}/account/state`) return send(res, 200, await controller.accountState());
       if (req.method === 'GET' && url.pathname === `${PREFIX}/state`) {
         const [spark,comments,reports,watch,chat,share,friends] = await Promise.all([getSpark?.(),getComments(),getReport(),getWatch(),getChat?.(),getShare?.(),getFriends?.()]);
         const chatState=chat?.state()||{}, watchState=watch.state(), shareState=share?.state()||{}, commentsState=comments.state(), video=controller.limits().state();
@@ -62,6 +63,7 @@ export function createNativeSettingsRoute({ getController, getComments, getRepor
         case '/video/start': empty(input); if ((await getWatch()).state().running) throw Object.assign(new Error('请先停止自主观看，再开始新一轮。'), { status: 409 }); await controller.pauseForLimits?.(); value = controller.limits().markSession('dsh', { explicit: true }); break;
         case '/video/stop': empty(input); value = controller.limits().endSession({ explicit: true }); await controller.pauseForLimits?.(); break;
         case '/browser/open': empty(input); value = await controller.openBrowser(); break;
+        case '/account/login': empty(input); value = await controller.openLogin(); break;
         case '/persona/configure': {
           if (Object.keys(input).some(key => !['content', 'expectedRevision'].includes(key))) throw Object.assign(new Error('人格设置只接收正文和读取版本。'), { status: 400 });
           if (active((await getWatch()).state()) || active((await getSpark()).state()) || getChat && chatBusy((await getChat()).state())) throw Object.assign(new Error('请先停止自主观看或等待正在处理的私信完成，再保存人格。'), { status: 409 });

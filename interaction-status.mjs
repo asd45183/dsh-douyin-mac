@@ -39,7 +39,7 @@ export function interactionPresence({chat={},share={},watch={},modelReady=false,
   const reply = (() => {
     if (friend?.policy?.enabled===false || friend?.enabled===false) return result('offline',false,'回复已关闭','好友互动已关闭。');
     if (!modelReady) return result('attention',false,'需要配置模型','请先配置回复使用的模型。');
-    if (!selected.length) return result('preparing',false,'准备中','请先选择允许互动的好友或群聊。');
+    if (!selected.length) return result('preparing',false,'好友互动未配置','如只需要观看，可关闭好友互动；要回复好友，请先在“好友互动”中选择许可会话。');
     if (friend?.status==='waiting-settings') return result('preparing',false,'准备中','正在更新许可名单，完成后自动恢复回复。');
     if (friend?.status==='preparing') return result('preparing',false,'正在准备回复通道',friend.waitReason || '正在准备受管聊天入口。');
     if (chat.recovery?.requiresUserAction===true || contacts.some(item=>item.recovery?.requiresUserAction===true)) return result('attention',false,'需要完成登录或验证','请在专用浏览器完成登录或验证码后继续。');

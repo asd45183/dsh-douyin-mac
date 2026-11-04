@@ -549,6 +549,49 @@ export class BrowserController {
     this.page = null;
     return this.browser;
   }
+  // 找到已核对的专用抖音页；准备页（launcher）也算，避免登录前误报“没有页面”。
+  async locatablePage({ signal } = {}) {
+    const browser = await this.connectExistingBrowser({ signal });
+    if (!browser) return { browser: null, page: null };
+    const shared = await findSharedPage(browser, this.source, signal);
+    if (shared) return { browser, page: shared };
+    const pages = browser.contexts().flatMap(context => context.pages()).filter(page => !page.isClosed() && /^https:\/\/www\.douyin\.com(?:\/|$)/.test(page.url()));
+    for (const page of pages) {
+      const name = await page.evaluate(() => window.name).catch(() => null);
+      if (name === 'deepseek-douyin-launcher') return { browser, page };
+    }
+    return { browser, page: null };
+  }
+  // 只读取登录状态，不启动浏览器或新建标签。
+  async accountState({ signal } = {}) {
+    const { browser, page } = await this.locatablePage({ signal });
+    if (!browser) return { connected: false, pageOpen: false, loggedIn: null, note: '专用浏览器未打开。' };
+    if (!page) return { connected: true, pageOpen: false, loggedIn: null, note: '专用浏览器已运行，但还没有抖音页面；点“打开抖音”建立入口。' };
+    this.browser = browser; this.page = page;
+    const state = await page.evaluate(readPageState);
+    return { connected: true, pageOpen: true, loggedIn: state.loginRequired !== true && state.verificationRequired !== true, loginRequired: state.loginRequired === true, verificationRequired: state.verificationRequired === true, url: page.url(), title: state.title || '', at: Date.now() };
+  }
+  // 打开抖音首页并点开登录入口，交给本人在专用 Chrome 中扫码。
+  async openLogin({ signal } = {}) {
+    let { page } = await this.locatablePage({ signal });
+    if (!page) {
+      await this.openBrowser({ signal });
+      ({ page } = await this.locatablePage({ signal }));
+    }
+    if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
+    this.page = page;
+    await page.goto('https://www.douyin.com/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page.waitForTimeout(2500);
+    const clicked = await page.evaluate(() => {
+      const visible = element => { const box = element.getBoundingClientRect(), style = getComputedStyle(element); return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'; };
+      const target = [...document.querySelectorAll('button,a,div,span')].find(element => visible(element) && (element.innerText || '').trim() === '登录');
+      if (!target) return false;
+      target.click(); return true;
+    }).catch(() => false);
+    await page.waitForTimeout(1200);
+    const state = await page.evaluate(readPageState).catch(() => ({}));
+    return { opened: true, clicked, loginRequired: state.loginRequired === true, verificationRequired: state.verificationRequired === true, message: clicked ? '已打开登录入口，请在本机专用 Chrome 中扫码登录。' : '已打开抖音首页；若没有登录框，请点右上角“登录”后扫码。' };
+  }
   releaseIdlePreparePage({signal,authorizePrepare}={}) {
     const operation=this.queue.catch(()=>{}).then(async()=>{
       aborted(signal);
