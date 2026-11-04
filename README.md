@@ -1,6 +1,6 @@
 # DSH 抖音助手（macOS / Chrome 版）
 
-0.1.9 说明。本项目基于上游 [dsh-douyin-agent](https://github.com/LockyBee/dsh-douyin-agent) 1.4.6 源码，移植为 **macOS 上只运行 Google Chrome 的 DSH 插件形态**；不包含 Windows 独立软件。人格、兴趣、观看用量、许可名单和日报沿用原实现。
+0.1.12 说明。本项目基于上游 [dsh-douyin-agent](https://github.com/LockyBee/dsh-douyin-agent) 1.4.6 源码，移植为 **macOS 上只运行 Google Chrome 的 DSH 插件形态**；不包含 Windows 独立软件。人格、兴趣、观看用量、许可名单和日报沿用原实现。
 
 在本机专用 Google Chrome 中浏览抖音电脑版，采样真实画面交给模型，按人格和实际观看行为更新兴趣。这是第三方适配，不是 DeepSeek 官方发行版。
 
@@ -40,7 +40,7 @@
 需要 macOS、Google Chrome、Node.js 22.13+ 和兼容的 DSH（`engines.dsh` 以 `package.json` 为准）。从 npm 安装到 web profile：
 
 ```sh
-dsh plugin --profile web add dsh-douyin-mac@0.1.9
+dsh plugin --profile web add dsh-douyin-mac@0.1.12
 ```
 
 本地开发也可以从源码目录安装（`npm install` 后 `dsh plugin --profile web add .`），两种方式不要同时用。
