@@ -974,6 +974,14 @@ export class ChatBrowser {
   listContacts({ signal, verifyFollowing = this.following === null, backgroundOnly = false } = {}) {
     return this.withPage(async page => {
       if (backgroundOnly && await this.isForeground(page)) throw Object.assign(new Error('专用浏览器在前台，暂不切换私信页。'), { code: 'CHAT_FOREGROUND' });
+      // 登录后的“是否保存登录信息”弹层会挡住消息列表，先取消它。
+      await page.evaluate(() => {
+        if (!/是否保存登录信息/.test(document.body.innerText || '')) return false;
+        const usable = element => { const box = element.getBoundingClientRect(), style = getComputedStyle(element); return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'; };
+        const cancel = [...document.querySelectorAll('button,div,span')].find(element => usable(element) && (element.innerText || '').trim() === '取消');
+        if (!cancel) return false;
+        cancel.click(); return true;
+      }).catch(() => false);
       const initial = await this.dialog(page, signal, { open: !backgroundOnly });
       if (initial.blocked) return { ...initial, contacts: [] };
       if (verifyFollowing && !backgroundOnly) {

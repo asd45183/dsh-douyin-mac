@@ -586,7 +586,20 @@ export class BrowserController {
         : loggedIn === false ? '未检测到抖音登录态，点“打开登录页”扫码登录。' : '无法确认登录态；可点“打开登录页”刷新后重试。';
     return { connected: true, pageOpen: true, loggedIn, pageShowsLogin, loginRequired, verificationRequired, url: page.url(), title: state.title || '', note, at: Date.now() };
   }
+  // 登录成功后抖音会弹“是否保存登录信息”，会挡住消息面板；这里选择“取消”避免保存密码。
+  async _dismissLoginPrompt(page) {
+    try {
+      return await page.evaluate(() => {
+        if (!/是否保存登录信息/.test(document.body.innerText || '')) return false;
+        const usable = element => { const box = element.getBoundingClientRect(), style = getComputedStyle(element); return box.width > 0 && box.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'; };
+        const cancel = [...document.querySelectorAll('button,div,span')].find(element => usable(element) && (element.innerText || '').trim() === '取消');
+        if (!cancel) return false;
+        cancel.click(); return true;
+      }).catch(() => false);
+    } catch { return false; }
+  }
   async _bringPageToFront(page) {
+    await this._dismissLoginPrompt(page);
     try {
       const session = await page.context().newCDPSession(page);
       try {
