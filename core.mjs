@@ -744,57 +744,6 @@ export class BrowserController {
     return { submitted, pageError, loggedIn: account.loggedIn, verificationRequired: account.verificationRequired, message: account.loggedIn === true ? '验证码已提交，登录成功。' : pageError ? `提交未通过：${pageError}` : account.verificationRequired === true ? '验证码已提交，页面仍要求验证；请核对验证码或换一种验证方式。' : '验证码已提交，但登录状态尚未确认；稍后点“检查登录状态”核对。' };
   }
   // 打开“接收短信验证码”并请求验证码；不填码、不提交。用真实鼠标点击，避免只触发空的 JS click。
-  async beginSmsVerification({ signal } = {}) {
-    const { page } = await this.locatablePage({ signal });
-    if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
-    this.page = page; await this._bringPageToFront(page);
-    let opened = false, requested = false;
-    for (const label of ['接收短信验证码']) { if (await this._clickExactText(page, label).catch(() => false)) { opened = true; break; } }
-    await page.waitForTimeout(1800);
-    for (const label of ['获取验证码', '发送验证码', '获取', '重新发送']) { if (await this._clickExactText(page, label).catch(() => false)) { requested = true; break; } }
-    await page.waitForTimeout(1500);
-    const text = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ')).catch(() => '');
-    const phone = (text.match(/1\d{2}[\s*]{2,}\d{2,4}/) || [])[0] || null;
-    const buffer = await page.screenshot({ type: 'png', timeout: 20_000 }).catch(() => null);
-    const codeInput = await page.locator('input[placeholder*="验证码"]').count().catch(() => 0);
-    return { opened, requested, phone, codeInput: codeInput > 0, buffer, message: codeInput > 0 ? `已进入验证码填写界面${phone ? `（${phone}）` : ''}；把收到的 6 位数字发给我即可。` : requested ? '已请求短信验证码；若页面仍停留在选项页，请手动点“接收短信验证码”。' : opened ? '已打开短信验证入口；如未收到验证码，点“获取验证码”再试。' : '没有找到“接收短信验证码”入口，请确认页面仍停留在身份验证。' };
-  }
-  // 填写并提交短信验证码；只接受 4–8 位数字。
-  async submitSmsCode(code, { signal } = {}) {
-    if (typeof code !== 'string' || !/^\d{4,8}$/.test(code.trim())) throw Object.assign(new Error('验证码必须是 4–8 位数字。'), { status: 400 });
-    const { page } = await this.locatablePage({ signal });
-    if (!page) throw Object.assign(new Error('专用浏览器没有可用页面，请先点“打开抖音”。'), { code: 'BROWSER_PAGE_MISSING' });
-    this.page = page; await this._bringPageToFront(page);
-    let input = page.locator('input[placeholder*="验证码"]').first();
-    if (!await input.count().catch(() => 0)) {
-      await this.beginSmsVerification({ signal });
-      input = page.locator('input[placeholder*="验证码"]').first();
-    }
-    if (!await input.count().catch(() => 0)) throw Object.assign(new Error('页面上没有找到验证码输入框，请确认仍在身份验证流程。'), { status: 409 });
-    await input.fill(String(code).trim());
-    await page.waitForTimeout(400);
-    const typed = await input.inputValue().catch(() => '');
-    let submitted = false;
-    // 先用回车提交（表单默认行为）；输入框被页面清空说明已经提交，不再点按钮避免重复。
-    try { await input.press('Enter'); await page.waitForTimeout(1500); } catch {}
-    if ((await input.inputValue().catch(() => '')).trim() === '') submitted = true;
-    const verifyButton = page.getByRole('button', { name: '验证', exact: true }).first();
-    if (!submitted && await verifyButton.count().catch(() => 0)) {
-      try { await verifyButton.click({ timeout: 6000 }); submitted = true; } catch { try { await verifyButton.click({ force: true, timeout: 4000 }); submitted = true; } catch {} }
-    }
-    if (!submitted) {
-      for (const name of [/^(?:提交|确定|下一步)$/, /^登录$/]) {
-        const button = page.getByText(name).first();
-        if (!await button.count().catch(() => 0)) continue;
-        try { await button.click({ timeout: 6000 }); submitted = true; break; } catch { try { await button.click({ force: true, timeout: 4000 }); submitted = true; break; } catch {} }
-      }
-    }
-    await page.waitForTimeout(3000);
-    const bodyText = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ')).catch(() => '');
-    const pageError = (bodyText.match(/(?:验证码[^。；]{0,12}(?:错误|过期|失效|不正确)|操作频繁|请稍后重试|验证码已发送)/) || [])[0] || '';
-    const account = await this.accountState({ signal });
-    return { submitted, typed, pageError, loggedIn: account.loggedIn, verificationRequired: account.verificationRequired, message: account.loggedIn === true ? '验证码已提交，登录成功。' : pageError ? `提交未通过：${pageError}` : account.verificationRequired === true ? '验证码已提交，页面仍要求验证；请核对验证码或换一种验证方式。' : '验证码已提交，但登录状态尚未确认；稍后点“检查登录状态”核对。' };
-  }
   // 截取登录二维码：优先裁切登录框，找不到时退回整页截图；已登录时直接返回。
   async captureLoginQr({ signal } = {}) {
     let { page } = await this.locatablePage({ signal });
