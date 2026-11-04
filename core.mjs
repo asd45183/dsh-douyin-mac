@@ -740,12 +740,14 @@ export class BrowserController {
     // 登录请求可能比页面反馈慢：轮询最多 40 秒，等 Cookie 或验证层变化。
     let account = await this.accountState({ signal });
     const deadline = Date.now() + 40_000;
-    while (account.loggedIn !== true && account.verificationRequired === true && Date.now() < deadline) {
+    let pageError = '';
+    while (account.loggedIn !== true && Date.now() < deadline) {
       await page.waitForTimeout(2000);
       account = await this.accountState({ signal });
+      const snapshot = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ')).catch(() => '');
+      pageError = (snapshot.match(/(?:验证码[^。；]{0,12}(?:错误|过期|失效|不正确)|操作频繁|请稍后重试)/) || [])[0] || '';
+      if (pageError) break;
     }
-    const bodyText = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ')).catch(() => '');
-    const pageError = (bodyText.match(/(?:验证码[^。；]{0,12}(?:错误|过期|失效|不正确)|操作频繁|请稍后重试)/) || [])[0] || '';
     return { submitted, pageError, waitedMs: Date.now() - (deadline - 40_000), loggedIn: account.loggedIn, verificationRequired: account.verificationRequired, message: account.loggedIn === true ? '验证码已提交，登录成功。' : pageError ? `提交未通过：${pageError}` : account.verificationRequired === true ? '验证码已提交，页面仍要求验证；请核对验证码或换一种验证方式。' : '验证码已提交，验证层已关闭，但登录态仍未建立（可能登录请求超时）；请重新扫码或重试。' };
   }
   // 打开“接收短信验证码”并请求验证码；不填码、不提交。用真实鼠标点击，避免只触发空的 JS click。
