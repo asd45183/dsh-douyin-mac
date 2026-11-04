@@ -295,7 +295,7 @@ export function readPageState() {
   const element = videoElements[0]?.element;
   const text = [...document.querySelectorAll('body *')].filter(e => e.childElementCount === 0 && visible(e) && !e.closest('[data-e2e="im-dialog"],[data-e2e="conversation-item"]')).map(e => clean(e.innerText || e.textContent)).filter(Boolean).join('\n').slice(-9000);
   const loginRequired = /扫码登录|验证码登录|登录后即可|手机扫码登录/.test(text);
-  const verificationRequired = [...document.querySelectorAll('#captcha_container,[id^="captcha_container"],[data-e2e="captcha-container"]')].some(visible) || /请完成下方验证|请完成验证|安全验证|拖动滑块/.test(text);
+  const verificationRequired = [...document.querySelectorAll('#captcha_container,[id^="captcha_container"],[data-e2e="captcha-container"]')].some(visible) || /请完成下方验证|请完成验证|安全验证|拖动滑块|身份验证|接收短信验证码|验证登录密码|发送短信验证/.test(text);
   let video = null, activeContainer = null, videoIdentityConflict = false;
   if (element) {
     let container = element.closest('[data-e2e="feed-active-video"],[data-e2e="video-detail"]');
@@ -582,7 +582,8 @@ export class BrowserController {
     const pageShowsLogin = loginRequired || verificationRequired;
     const note = loggedIn === true
       ? (pageShowsLogin ? '登录态已存在，但当前页面仍显示登录入口，点“打开登录页”会刷新页面。' : '已登录抖音（本机 Cookie 检测）。')
-      : loggedIn === false ? '未检测到抖音登录态，点“打开登录页”扫码登录。' : '无法确认登录态；可点“打开登录页”刷新后重试。';
+      : verificationRequired ? '抖音要求身份验证（短信或登录密码），扫码无法绕过；请在专用 Chrome 完成验证，完成后状态会自动更新。'
+        : loggedIn === false ? '未检测到抖音登录态，点“打开登录页”扫码登录。' : '无法确认登录态；可点“打开登录页”刷新后重试。';
     return { connected: true, pageOpen: true, loggedIn, pageShowsLogin, loginRequired, verificationRequired, url: page.url(), title: state.title || '', note, at: Date.now() };
   }
   async _bringPageToFront(page) {
@@ -685,6 +686,24 @@ export class BrowserController {
       if (!target) return false;
       target.click(); return true;
     }).catch(() => false);
+    const liveState = await page.evaluate(readPageState).catch(() => ({}));
+    if (liveState.verificationRequired === true) {
+      const rect = await page.evaluate(() => {
+        const usable = element => { const box = element.getBoundingClientRect(), style = getComputedStyle(element); return box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0 && box.top < innerHeight && box.left < innerWidth && style.display !== 'none' && style.visibility !== 'hidden'; };
+        const sized = [...document.querySelectorAll('div')]
+          .filter(element => usable(element) && /身份验证|接收短信验证码|验证登录密码/.test(element.innerText || ''))
+          .map(element => ({ box: element.getBoundingClientRect(), title: /身份验证/.test(element.innerText || '') }))
+          .filter(item => item.box.width >= 260 && item.box.width <= 900 && item.box.height >= 200 && item.box.height <= 900);
+        // 优先包含“身份验证”标题的容器（取最大），否则退回最小的选项框。
+        const titled = sized.filter(item => item.title).sort((a, b) => b.box.width * b.box.height - a.box.width * a.box.height);
+        const first = titled[0] || sized.sort((a, b) => a.box.width * a.box.height - b.box.width * b.box.height)[0];
+        if (!first) return null;
+        const left = Math.max(0, first.box.x), top = Math.max(0, first.box.y);
+        return { x: left, y: top, width: Math.max(40, Math.min(innerWidth - left, first.box.width)), height: Math.max(40, Math.min(innerHeight - top, first.box.height)) };
+      }).catch(() => null);
+      const buffer = await page.screenshot({ ...(rect ? { clip: rect } : {}), type: 'png', timeout: 20_000 });
+      return { alreadyLoggedIn: false, buffer, clip: rect, kind: 'verification', message: '当前是身份验证（短信/密码），不是扫码；已截取验证界面。' };
+    }
     // 二维码是登录框内 120–320px 的方形图片，通常以 data:image 形式注入；等它渲染出来。
     await page.waitForFunction(() => [...document.querySelectorAll('img')].some(img => /^data:image\//.test(img.getAttribute('src') || '') && (() => { const box = img.getBoundingClientRect(); return box.width >= 120 && box.width <= 320 && Math.abs(box.width - box.height) < 24; })()), { timeout: 15_000 }).catch(() => {});
     await page.waitForTimeout(600);
