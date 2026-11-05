@@ -15,6 +15,7 @@ import { AutonomousShare } from './autonomous-share.mjs';
 import { TaskLimits } from './task-limits.mjs';
 import { SparkService } from './spark-service.mjs';
 import { AutonomousComments } from './autonomous-comments.mjs';
+import { AutonomousFollow } from './autonomous-follow.mjs';
 import { UsageLedger } from './usage-ledger.mjs';
 import { WatchOptions } from './watch-options.mjs';
 import { DiagnosticsService } from './diagnostics.mjs';
@@ -74,7 +75,7 @@ async function staticAsset(root, pathname) {
   } catch (error) { if (['ENOENT', 'ENOTDIR'].includes(error.code)) return null; throw error; }
 }
 
-export function createApiServer({ controller, config, personaMemory, watchService, shareService, sparkService, commentService, reportService, modeService, taskLimits, agent = new ApiAgent({ controller, config, personaMemory }), chatService, videoLimits, pauseVideoSources, mediaAdapter, watchSchedule, friendInteractions, port = 3218, htmlFile = path.join(ROOT, 'public/index.html'), staticRoot } = {}) {
+export function createApiServer({ controller, config, personaMemory, watchService, shareService, sparkService, commentService, followService, reportService, modeService, taskLimits, agent = new ApiAgent({ controller, config, personaMemory }), chatService, videoLimits, pauseVideoSources, mediaAdapter, watchSchedule, friendInteractions, port = 3218, htmlFile = path.join(ROOT, 'public/index.html'), staticRoot } = {}) {
   if (staticRoot !== undefined && (typeof staticRoot !== 'string' || !path.isAbsolute(staticRoot))) throw new Error('静态资源目录必须是绝对路径。');
   const stateDir = videoLimits?.stateDir ?? resolveRuntimePaths().stateDir;
   const usageLedger = new UsageLedger({ stateDir }), optionsService = watchService?.optionsService || new WatchOptions({ stateDir });
@@ -86,7 +87,7 @@ export function createApiServer({ controller, config, personaMemory, watchServic
   const usageSnapshot = () => { const watch=watchService?.state(),chat=chatService?.state(),pendingChat=chat?.contacts?.filter(item=>item.pending?.phase==='model').length||0; return {...usageLedger.state(),checkedAt:new Date().toISOString(),inProgress:{watch:watch?.pendingRequests||0,chat:pendingChat,total:(watch?.pendingRequests||0)+pendingChat},videoDaily:videoLimits?.state().daily||null}; };
   const diagnostics = new DiagnosticsService({ source: 'api', controller, modeService, videoLimits, watchService, watchSchedule, optionsService, usageLedger,
     modelConfigured: () => Boolean(config.apiKey), paths: { ...resolveRuntimePaths(), stateDir },
-    interactionStates: () => ({ chat: chatService?.state(), spark: sparkService?.state(), comments: commentService?.state() }),
+    interactionStates: () => ({ chat: chatService?.state(), spark: sparkService?.state(), comments: commentService?.state(), follow: followService?.state() }),
   });
   controller.diagnosticsService = diagnostics;
   const token = randomBytes(32).toString('hex');
@@ -143,6 +144,25 @@ export function createApiServer({ controller, config, personaMemory, watchServic
       if (url.pathname === '/api/watch/options') {
         if (request.method === 'GET') return reply(response, 200, optionsService.state());
         if (request.method === 'POST') return reply(response, 200, optionsService.configure(await readJson(request), { explicit: true }));
+      }
+      if (url.pathname.startsWith('/api/follow/')) {
+        if (!followService) return reply(response, 503, { error: '自动回关服务尚未就绪。' });
+        if (url.search) return reply(response, 400, { error: '自动回关设置不接受地址参数。' });
+        if (request.method === 'GET' && url.pathname === '/api/follow/state') return reply(response, 200, followService.state());
+        if (request.method === 'POST' && ['/api/follow/configure', '/api/follow/resolve', '/api/follow/run'].includes(url.pathname)) {
+          if (url.pathname === '/api/follow/run') {
+            if (request.method !== 'POST') return reply(response, 405, { error: '立即回关只接受 POST。' });
+            const result = await followService.runOnce({});
+            return reply(response, 200, { ...result, state: followService.state() });
+          }
+          const body = await readJson(request), configuring = url.pathname.endsWith('/configure');
+          if (Object.keys(body).some(key => !(configuring ? ['enabled', 'dailyLimit', 'perRunLimit'] : ['operationIds', 'outcome']).includes(key))) {
+            return reply(response, 400, { error: configuring ? '自动回关设置只接受总开关、每日上限与每次上限。' : '回关核对只接受记录编号和实际结果。' });
+          }
+          const state = configuring ? followService.configure(body, { explicit: true }) : followService.resolve(body, { explicit: true });
+          return reply(response, 200, state);
+        }
+        return reply(response, 404, { error: '自动回关接口不存在。' });
       }
       if (url.pathname.startsWith('/api/comments/')) {
         if (!commentService) return reply(response, 503, { error: '自主评论服务尚未就绪。' });
@@ -493,6 +513,8 @@ export async function startApiServer({ port = Number(process.env.DOUYIN_API_PORT
   const agent = new ApiAgent({ controller, config, personaMemory, maxSteps: taskPolicy.maxSteps, maxToolCalls: taskPolicy.maxToolCalls, taskTimeoutMs: taskPolicy.timeoutSeconds * 1000 });
   if (!shareService) shareService = new AutonomousShare({ controller, videoLimits, personaMemory, stateDir: videoLimits.stateDir ?? resolveRuntimePaths().stateDir, source: 'api' });
   if (!commentService) commentService = new AutonomousComments({ controller, videoLimits, personaMemory, stateDir: videoLimits.stateDir ?? resolveRuntimePaths().stateDir, source: 'api' });
+  if (!followService && typeof chatService?.browser?.listFans === 'function' && typeof chatService.browser.followBack === 'function') followService = new AutonomousFollow({ chat: chatService.browser, stateDir: videoLimits.stateDir ?? resolveRuntimePaths().stateDir });
+  followService?.start();
   if (!reportService && personaMemory.personaFolder && personaMemory.stateFile) reportService = new DailyReport({ personaMemory, stateDir: videoLimits.stateDir ?? resolveRuntimePaths().stateDir });
   if (!modeService) {
     if (typeof controller.getWatchMode === 'function') modeService = await controller.getWatchMode();

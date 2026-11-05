@@ -153,9 +153,26 @@ test('真实Chrome合成缺页：自动准备仅创建一个受管聊天页，�
   const before = f.navigations(); for (let i = 0; i < 12; i++) await coordinator.reconcile(); assert.equal(f.navigations(), before); assert.equal(f.context.pages().length, 2); assert.equal(await f.sends(), 0);
 });
 
-test('真实Chrome合成前台：建页前停止，不强制清焦点或改变窗口状态', { timeout: 30_000 }, async t => {
+test('真实Chrome合成前台视频页：自动准备改用后台受管页，前台页不改名不导航不抢焦点', { timeout: 30_000 }, async t => {
   const f = await edgeFixture(t, { foreground: true }); await f.existing.bringToFront(); assert.equal(await f.chat.isForeground(f.existing), true);
-  const before = f.navigations(); await assert.rejects(f.chat.prepareChat({ automatic: true, authorizePrepare: async () => true }), error => error.code === 'CHAT_FOREGROUND'); assert.equal(f.context.pages().length, 1); assert.equal(f.navigations(), before); assert.equal(await f.sends(), 0);
+  const beforeUrl = f.existing.url(), beforeName = await f.existing.evaluate(() => window.name);
+  const result = await f.chat.prepareChat({ automatic: true, authorizePrepare: async () => true });
+  assert.equal(result.prepared, true);
+  assert.equal(f.context.pages().length, 2);
+  const owned = []; for (const page of f.context.pages()) if (await page.evaluate(() => window.name) === 'deepseek-douyin-api-chat') owned.push(page);
+  assert.equal(owned.length, 1);
+  // 无头 Chrome 不区分后台页焦点（hasFocus 在两个标签上都可能为真），建页不激活由 CDP background 与 core 的建页测试保证。
+  assert.equal(f.existing.url(), beforeUrl); assert.equal(await f.existing.evaluate(() => window.name), beforeName);
+  assert.equal(await f.existing.evaluate(() => document.hasFocus()), true, '用户正在看的页面必须保持焦点');
+  assert.equal(await f.sends(), 0);
+});
+
+test('真实Chrome合成前台聊天页：仍按前台让路，不建第二个受管页', { timeout: 30_000 }, async t => {
+  const f = await edgeFixture(t, { foreground: true });
+  await f.existing.evaluate(() => { window.name = 'deepseek-douyin-api-chat'; }); await f.existing.bringToFront();
+  assert.equal(await f.chat.isForeground(f.existing), true);
+  await assert.rejects(f.chat.prepareChat({ automatic: true, authorizePrepare: async () => true }), error => error.code === 'CHAT_FOREGROUND');
+  assert.equal(f.context.pages().length, 1); assert.equal(await f.sends(), 0);
 });
 
 test('真实Chrome合成已有草稿：不导航、不改草稿、不多建页', { timeout: 30_000 }, async t => {

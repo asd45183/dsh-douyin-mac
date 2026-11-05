@@ -71,3 +71,12 @@ test('隔离Chrome合成页面：真实最小化窗口且DOM残留焦点时返�
     } finally { await session.detach(); }
   } finally { await browser.close(); }
 });
+
+test('自动准备跳过前台非聊天页，但前台聊天页仍让路', async () => {
+  const chat = new ChatBrowser({ controller: {} });
+  chat.isForeground = async page => page.foreground === true;
+  const page = (name, foreground) => ({ foreground, evaluate: async () => name });
+  assert.equal(await chat.skipForegroundPreparePage(page('deepseek-douyin-api', true)), true);
+  assert.equal(await chat.skipForegroundPreparePage(page('deepseek-douyin-api-chat', true)), false);
+  assert.equal(await chat.skipForegroundPreparePage(page('deepseek-douyin-api', false)), false);
+});

@@ -121,7 +121,7 @@ export async function installNativeFocusReset(context, { onFailure = () => {}, t
   } catch (error) { await close(); throw fault || focusFailure(error); }
 }
 
-export async function runBrowserHost({ profile, controlDir, port, chromiumImpl = chromium, probeInstallation = probeChromeInstallation, logger = console, processImpl = process } = {}) {
+export async function runBrowserHost({ profile, controlDir, port, chromiumImpl = chromium, probeInstallation = probeChromeInstallation, logger = console, processImpl = process, chromiumSandbox = true } = {}) {
   if (!profile || !controlDir || !Number.isInteger(port) || port < 1024 || port > 65535) return { started: false, exitCode: 2 };
   mkdirSync(controlDir, { recursive: true });
   const stateFile = path.join(controlDir, 'browser.json'); let context, installation, focusFailed = false;
@@ -134,7 +134,7 @@ export async function runBrowserHost({ profile, controlDir, port, chromiumImpl =
     writeState(false);
     try { installation = await probeInstallation(); } catch {}
     context = await chromiumImpl.launchPersistentContext(profile, {
-      channel: 'chrome', headless: false, viewport: null, ignoreDefaultArgs: ['--mute-audio'],
+      channel: 'chrome', headless: false, viewport: null, ignoreDefaultArgs: ['--mute-audio'], chromiumSandbox,
       args: [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1', '--autoplay-policy=no-user-gesture-required', '--hide-crash-restore-bubble', '--no-first-run', '--no-default-browser-check'],
     });
     const nativeFocus = await installNativeFocusReset(context, { onFailure: error => {

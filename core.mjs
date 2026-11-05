@@ -526,6 +526,10 @@ export class BrowserController {
     this.commentsPromise ??= import('./autonomous-comments.mjs?v=10').then(({ AutonomousComments }) => new AutonomousComments({ controller: this, personaMemory: this.getPersonaMemory(), videoLimits: this.limits(), stateDir: this.limits().stateDir, source: this.source === 'dsh' ? 'dsh' : 'api' })).catch(error => { this.commentsPromise = null; throw error; });
     return this.commentsPromise;
   }
+  getFollow() {
+    this.followPromise ??= Promise.all([this.getChatService(), import('./autonomous-follow.mjs?v=1')]).then(([chat, { AutonomousFollow }]) => new AutonomousFollow({ chat: chat.browser, stateDir: this.limits().stateDir })).then(service => { service.start(); return service; }).catch(error => { this.followPromise = null; throw error; });
+    return this.followPromise;
+  }
   getReport() {
     this.reportPromise ??= import('./daily-report.mjs?v=10').then(({ DailyReport }) => new DailyReport({ personaMemory: this.getPersonaMemory() })).catch(error => { this.reportPromise = null; throw error; });
     return this.reportPromise;
@@ -857,9 +861,10 @@ export class BrowserController {
     });
     this.queue = operation; return operation;
   }
-  async connect(signal, { launch = true, create = true, authorizePrepare } = {}) {
+  async connect(signal, { launch = true, create = true, authorizePrepare, excludePage } = {}) {
     aborted(signal);
     const label=browserPageLabel(this.source);
+    const excluded = async candidate => { if (typeof excludePage !== 'function') return false; try { return await excludePage(candidate) === true; } catch { return true; } };
     let createdPage = null;
     const eligiblePage = candidate => { const address = candidate.url(); return address === 'about:blank' || /^https:\/\/www\.douyin\.com(?:\/|$)/.test(address); };
     try {
@@ -869,7 +874,7 @@ export class BrowserController {
         let owned=0;
         for(const candidate of this.browser.contexts()[0].pages()){aborted(signal);if(!candidate.isClosed()&&await candidate.evaluate(()=>window.name).catch(()=>null)===label&&eligiblePage(candidate))owned++;}
         if(owned>1)throw new Error('发现多个归属相同的专用标签，请保留一个后再试。');
-        if(owned===1 && eligiblePage(this.page) && this.page.url()!=='about:blank')return this.page;
+        if(owned===1 && eligiblePage(this.page) && this.page.url()!=='about:blank' && !await excluded(this.page))return this.page;
       }
       this.page=null;
     }
@@ -882,6 +887,8 @@ export class BrowserController {
     try {
       const context=this.browser.contexts()[0];
       this.page=await findSharedPage(this.browser,this.source,signal);
+      // 被排除的页面（例如用户正在看的非聊天页）既不改名也不导航，改为后台新建。
+      if(this.page && await excluded(this.page)) this.page=null;
       if(this.page && await this.page.evaluate(()=>window.name)!==label)await this.page.evaluate(name=>{window.name=name;},label);
       if(!this.page&&create&&['api','dsh'].includes(this.source)){
         const releaseLauncher=await lock('browser-launcher',signal,this.controlDirectory);
@@ -893,6 +900,8 @@ export class BrowserController {
         for(const candidate of context.pages()){if(candidate.isClosed()||candidate.url()!=='about:blank')continue;if(await candidate.evaluate(()=>!window.name&&!document.body?.textContent?.trim()&&document.querySelectorAll('body *').length===0).catch(()=>false))initial.push(candidate);}
         if (authorizePrepare) { await authorizePrepare(); aborted(signal); }
         this.page=initial.length===1?initial[0]:(createdPage=authorizePrepare?await createBackgroundPage(this.browser,context,{signal,authorizePrepare}):await context.newPage());
+        // 本次准备新建的页属于插件自己，后续前台核对不再把它当用户页。
+        if (createdPage) Object.defineProperty(createdPage, '__dshCreatedForPrepare', { value: true, configurable: true });
         await this.page.evaluate(name=>{window.name=name;},label);
       }
       this.page.setDefaultTimeout(10_000);this.page.setDefaultNavigationTimeout(25_000);aborted(signal);
@@ -954,7 +963,7 @@ export class BrowserController {
     }
     return state;
   }
-  withPage(callback,{signal,launch=true,create=true,authorizePrepare}={}) {
+  withPage(callback,{signal,launch=true,create=true,authorizePrepare,excludePage}={}) {
     const operation=this.queue.catch(()=>{}).then(async()=>{
       const release=await lock(browserPageLock(this.source),signal,this.controlDirectory);
       const onAbort=()=>{this.browser?.close().catch(()=>{});};
@@ -962,7 +971,7 @@ export class BrowserController {
       try {
         aborted(signal);
         if (authorizePrepare) { await authorizePrepare(); aborted(signal); }
-        const page=await this.connect(signal,{launch,create,authorizePrepare});
+        const page=await this.connect(signal,{launch,create,authorizePrepare,excludePage});
         aborted(signal);
         if (['api', 'dsh'].includes(this.source)) await (await this.getWatchMode()).apply(page);
         if(new URL(page.url()).origin!=='https://www.douyin.com') throw Object.assign(new Error('专用标签页已离开抖音，请重新打开抖音或准备回复通道后操作。'), { code: 'CHAT_PAGE_LEFT_DOUYIN' });

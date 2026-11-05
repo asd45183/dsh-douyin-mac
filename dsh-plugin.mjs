@@ -249,7 +249,7 @@ export async function apply(ctx, config = {}) {
       usageLedger: new UsageLedger({ stateDir }), optionsService: new WatchOptions({ stateDir }),
       paths: { ...resolveRuntimePaths(), stateDir },
       settingsTransport: () => ({ webServer: typeof optionalService(ctx, 'webServer')?.register === 'function', connectionFetch: typeof optionalService(ctx, 'connection')?.fetch?.register === 'function' }),
-      interactionStates: async () => ({ chat: (await controller.getChatService()).state(), spark: (await controller.getSparkService()).state(), comments: (await controller.getComments()).state() }),
+      interactionStates: async () => ({ chat: (await controller.getChatService()).state(), spark: (await controller.getSparkService()).state(), comments: (await controller.getComments()).state(), follow: (await controller.getFollow()).state() }),
     });
   };
   const definitions = createNativeToolDefinitions({ ctx, getController, getWatch, getSpark, getDiagnostics, attachPersona:personaBinding.attach });
@@ -282,6 +282,7 @@ export async function apply(ctx, config = {}) {
       settingsFiber = bindNativeSettingsRoutes(ctx, () => createNativeSettingsRoute({
           getController, modelSettings, watchSchedule, getDiagnostics, pushLoginQr, getFriends:async()=>friendInteractions,
           getComments: async () => (await getController()).getComments(),
+          getFollow: async () => (await getController()).getFollow(),
           getReport: async () => (await getController()).getReport(),
           getSpark: async () => (await getController()).getSparkService(),
           getShare: async () => (await getWatch(settingsExec(), false)).getShareService(),

@@ -13,6 +13,7 @@ import { imageFileType, UPLOAD_STAGING_CONTRACT, readUploadStagingContractDom, r
 export { MessageIdentityTracker } from './message-tracker.mjs';
 
 const HOME = 'https://www.douyin.com/?recommend=1&from_nav=1';
+const PROFILE_SELF = 'https://www.douyin.com/user/self?from_tab_name=main';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const stop = signal => signal?.throwIfAborted();
 const AUDIO_LIMIT = 25 * 1024 * 1024;
@@ -227,6 +228,83 @@ export function readFollowingDom() {
     const labels = [...row.querySelectorAll('button,[data-e2e="follow-status"],[data-e2e="relationship"]')].map(e => e.textContent.trim());
     return { displayName, mutual: labels.some(label => ['相互关注', '互相关注'].includes(label)) };
   }).filter(row => row.displayName);
+}
+
+/**
+ * 读取粉丝列表行（只读）。行不依赖混淆类名：取最深的“含 /user/ 链接且含按钮”的块。
+ * 主按钮文案即关系：回关 = 尚未回关，相互关注/已关注 = 已回关。
+ */
+export function readFansDom() {
+  const visible = element => {
+    const rect = element.getBoundingClientRect(), style = getComputedStyle(element)
+    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+  }
+  const root = [...document.querySelectorAll('[data-e2e="user-fans-container"]')].find(visible)
+  if (!root) return { found: false, rows: [], counters: { following: null, fans: null }, end: false }
+  const pick = userId => {
+    const blocks = [...root.querySelectorAll('div')].filter(block => visible(block)
+      && block.querySelector('a[href*="/user/"]') && block.querySelector('button'))
+    for (const block of blocks) {
+      const link = block.querySelector('a[href*="/user/"]')
+      if (!(link.getAttribute('href') || '').includes('/user/' + userId)) continue
+      // 取最深的一层，避免外层容器把相邻粉丝也包进来。
+      const deeper = [...block.querySelectorAll('div')].some(child => child !== block
+        && child.querySelector('a[href*="/user/"]') && child.querySelector('button'))
+      if (!deeper) return block
+    }
+    return null
+  }
+  const seen = new Set(), rows = []
+  for (const block of [...root.querySelectorAll('div')].filter(el => visible(el) && el.querySelector('a[href*="/user/"]') && el.querySelector('button'))) {
+    const link = block.querySelector('a[href*="/user/"]')
+    const href = link.getAttribute('href') || ''
+    const userId = (/\/user\/([^/?#]+)/.exec(href) || [])[1]
+    if (!userId || seen.has(userId)) continue
+    if (pick(userId) !== block) continue
+    seen.add(userId)
+    // 回关前主按钮是「回关」；回关后平台把它换成 secondary「已关注/相互关注」，所以按文案找关系按钮。
+    const labels = [...block.querySelectorAll('button')].map(button => (button.textContent || '').trim()).filter(Boolean)
+    const relation = labels.find(label => ['回关', '已关注', '相互关注'].includes(label)) || ''
+    rows.push({
+      userId,
+      name: (block.querySelector('.Zce7SWd3')?.textContent || link.textContent || '').trim().slice(0, 60),
+      relation,
+      buttons: [...new Set(labels)].slice(0, 6),
+    })
+  }
+  const text = (document.body.innerText || '').replace(/\s+/g, ' ')
+  return {
+    found: true,
+    rows,
+    counters: {
+      following: (/(?:^| )关注 (\d+(?:\.\d+)?万?)/.exec(text) || [])[1] || null,
+      fans: (/(?:^| )粉丝 (\d+(?:\.\d+)?万?)/.exec(text) || [])[1] || null,
+    },
+    end: /暂时没有更多了/.test(text),
+  }
+}
+
+/** 只点目标粉丝行内的主按钮（回关），不碰同一行的“移除”。 */
+export function clickFanFollowBack({ userId } = {}) {
+  const root = document.querySelector('[data-e2e="user-fans-container"]')
+  if (!root) return { clicked: false, reason: 'no-list' }
+  const blocks = [...root.querySelectorAll('div')].filter(block => block.querySelector('a[href*="/user/"]') && block.querySelector('button'))
+  for (const block of blocks) {
+    const link = block.querySelector('a[href*="/user/"]')
+    if (!(link.getAttribute('href') || '').includes('/user/' + userId)) continue
+    const deeper = [...block.querySelectorAll('div')].some(child => child !== block
+      && child.querySelector('a[href*="/user/"]') && child.querySelector('button'))
+    if (deeper) continue
+    // 只点文案正好是「回关」的按钮；「移除/确认移除/取消」「已关注」「相互关注」都不点。
+    const target = [...block.querySelectorAll('button')].find(button => (button.textContent || '').trim() === '回关')
+    if (!target) return { clicked: false, reason: 'not-pending' }
+    // 站点的按钮由框架托管，只派发 click 有时只触发一次乐观渲染而不会真正落库；补全指针序列。
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
+    }
+    return { clicked: true }
+  }
+  return { clicked: false, reason: 'not-found' }
 }
 
 export function readConversationListDom() {
@@ -928,7 +1006,7 @@ export class ChatBrowser {
     }, visibleRows.map(row => ({ id: contactOpaqueId(row), displayName: row.displayName, nativeId: row.nativeId })));
     return { ...flags, contacts, relationshipDiscovery: this.relationshipDiscovery, listDiscovery: { source: 'current-conversation-list', scannedToEnd, count: contacts.length, note: `已读取当前消息列表的 ${contacts.length} 个会话；不代表全部关注好友或所有群聊。`, ...(reason ? { reason } : {}) } };
   }
-  async assertAutomaticPrepareSafe(signal, authorizePrepare) {
+  async assertAutomaticPrepareSafe(signal, authorizePrepare, { allowForegroundChat = false } = {}) {
     stop(signal);
     if (typeof authorizePrepare !== 'function') throw Object.assign(new Error('自动准备缺少可信授权检查，未创建页面。'), { code: 'CHAT_PREPARE_UNSUPPORTED' });
     await authorizePrepare(); stop(signal);
@@ -941,9 +1019,14 @@ export class ChatBrowser {
       const address = page.url();
       let origin; try { origin = new URL(address).origin; } catch { origin = null; }
       if (address !== 'about:blank' && origin !== 'https://www.douyin.com') throw Object.assign(new Error('专用浏览器有页面已离开抖音，未自动读取内容或创建回复页。'), { code: 'CHAT_PAGE_LEFT_DOUYIN' });
-      if (await this.isForeground(page)) throw Object.assign(new Error('专用浏览器在前台，稍后自动准备回复通道。'), { code: 'CHAT_FOREGROUND' });
       stop(signal);
       const name = await page.evaluate(() => window.name);
+      if (await this.isForeground(page)) {
+        // 用户正看着的受管聊天页不能被准备流程改动，等它退到后台；其它页面保持原样，准备改用后台页。
+        // 第二次核对时，刚建出来的后台受管页在无头环境可能仍报告前台，它是本次准备要用的页，不再当成用户页。
+        if (/-chat$/.test(name) && !allowForegroundChat) throw Object.assign(new Error('专用聊天页在前台，稍后自动准备回复通道。'), { code: 'CHAT_FOREGROUND' });
+        continue;
+      }
       if (address === 'about:blank') {
         if (name) throw Object.assign(new Error('具名受管页面停留在空白页，未自动导航或创建回复页。'), { code: 'CHAT_PAGE_LEFT_DOUYIN' });
         continue;
@@ -956,20 +1039,88 @@ export class ChatBrowser {
     await authorizePrepare(); stop(signal);
   }
 
+  /** 打开本人的粉丝列表；前台时不动页面，交由调用方稍后重试。 */
+  async openFansPanel(page, signal) {
+    stop(signal);
+    if (!await this.gotoWithRetry(page, PROFILE_SELF, signal)) return false;
+    stop(signal);
+    await page.locator('[data-e2e="user-info-fans"]').first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      stop(signal);
+      const ready = await page.evaluate(() => {
+        const root = document.querySelector('[data-e2e="user-fans-container"]');
+        if (!root) return false;
+        const rect = root.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      }).catch(() => false);
+      if (ready) return true;
+      await page.locator('[data-e2e="user-info-fans"]').first().click({ timeout: 3000 }).catch(() => {});
+      await page.waitForTimeout(600);
+    }
+    return false;
+  }
+
+  /** 只读：读取本人粉丝列表。前台时让路，不切页、不点击关注。 */
+  async listFans({ signal, backgroundOnly = true } = {}) {
+    return this.withPage(async page => {
+      if (backgroundOnly && await this.isForeground(page)) throw Object.assign(new Error('专用浏览器在前台，暂不读取粉丝列表。'), { code: 'CHAT_FOREGROUND' });
+      if (!await this.openFansPanel(page, signal)) throw Object.assign(new Error('没有打开粉丝列表，未读取。'), { code: 'FANS_LIST_UNAVAILABLE' });
+      const snapshot = await page.evaluate(readFansDom);
+      if (!snapshot.found) throw Object.assign(new Error('没有读到粉丝列表容器，未读取。'), { code: 'FANS_LIST_UNAVAILABLE' });
+      return { fans: snapshot.rows, counters: snapshot.counters, end: snapshot.end };
+    }, { signal, launch: !backgroundOnly, create: false });
+  }
+
+  /** 回关一个已核对身份的粉丝：只点该行的主按钮，并在点击后回读关系。 */
+  async followBack({ signal, userId, name } = {}) {
+    if (typeof userId !== 'string' || !/^[A-Za-z0-9_-]{6,}$/.test(userId)) throw new TypeError('粉丝 id 无效，未回关。');
+    return this.withPage(async page => {
+      if (await this.isForeground(page)) throw Object.assign(new Error('专用浏览器在前台，未回关。'), { code: 'CHAT_FOREGROUND' });
+      if (!await this.openFansPanel(page, signal)) throw Object.assign(new Error('没有打开粉丝列表，未回关。'), { code: 'FANS_LIST_UNAVAILABLE' });
+      const before = await page.evaluate(readFansDom);
+      const row = before.fans.find(fan => fan.userId === userId);
+      if (!row) return { confirmed: false, reason: 'not-found' };
+      if (name && row.name !== name) return { confirmed: false, reason: 'identity-changed' };
+      if (row.relation !== '回关') return { confirmed: true, already: true, relation: row.relation };
+      const clicked = await page.evaluate(clickFanFollowBack, { userId });
+      if (!clicked?.clicked) return { confirmed: false, reason: clicked?.reason || 'not-clickable' };
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        stop(signal);
+        await page.waitForTimeout(500);
+        const after = await page.evaluate(readFansDom);
+        const current = after.fans.find(fan => fan.userId === userId);
+        if (!current) return { confirmed: false, reason: 'row-vanished' };
+        if (current.relation === '相互关注' || current.relation === '已关注') return { confirmed: true, relation: current.relation };
+        if (current.relation === '回关') continue;
+        return { confirmed: false, reason: `unexpected:${current.relation}` };
+      }
+      return { confirmed: false, reason: 'unconfirmed' };
+    }, { signal, launch: false, create: false });
+  }
+
+  /** 自动准备时跳过用户正在看的非聊天页；受管聊天页仍按前台让路处理。 */
+  async skipForegroundPreparePage(candidate) {
+    if (!await this.isForeground(candidate)) return false;
+    const name = await candidate.evaluate(() => window.name).catch(() => '');
+    return !/-chat$/.test(name);
+  }
+
   async prepareChat({ signal, automatic = false, authorizePrepare } = {}) {
     if (automatic) await this.assertAutomaticPrepareSafe(signal, authorizePrepare);
+    const excludePage = automatic ? candidate => this.skipForegroundPreparePage(candidate) : undefined;
     let page;
-    try { page = await this.withPage(async current => current, { signal, launch: !automatic, create: false, ...(automatic ? { authorizePrepare } : {}) }); }
+    try { page = await this.withPage(async current => current, { signal, launch: !automatic, create: false, excludePage, ...(automatic ? { authorizePrepare } : {}) }); }
     catch (error) { if (!['CHAT_PAGE_NOT_OPEN', 'CHAT_PAGE_LEFT_DOUYIN'].includes(error.code)) throw error; }
     if (page && await this.isForeground(page)) throw Object.assign(new Error('专用浏览器在前台，未准备回复通道。'), { code: 'CHAT_FOREGROUND' });
     return this.withPage(async current => {
-      if (automatic) await this.assertAutomaticPrepareSafe(signal, authorizePrepare);
-      if (await this.isForeground(current)) throw Object.assign(new Error('专用浏览器在前台，未准备回复通道。'), { code: 'CHAT_FOREGROUND' });
+      if (automatic) await this.assertAutomaticPrepareSafe(signal, authorizePrepare, { allowForegroundChat: true });
+      // 刚建的后台页在无头环境可能报告前台；它是本次准备要用的页，用户并没有在看它。
+      if (current?.__dshCreatedForPrepare !== true && await this.isForeground(current)) throw Object.assign(new Error('专用浏览器在前台，未准备回复通道。'), { code: 'CHAT_FOREGROUND' });
       const flags = await this.dialog(current, signal, { open: true });
       if (flags.blocked || flags.loginRequired || flags.verificationRequired) return { prepared: false, blocked: flags.blocked === true, loginRequired: flags.loginRequired === true, verificationRequired: flags.verificationRequired === true };
       const list = await this.contactList(current, signal, { enumerate: false, ensurePage: true });
       return { prepared: true, count: Array.isArray(list.contacts) ? list.contacts.length : 0 };
-    }, { signal, launch: !automatic, create: true, ...(automatic ? { authorizePrepare } : {}) });
+    }, { signal, launch: !automatic, create: true, excludePage, ...(automatic ? { authorizePrepare } : {}) });
   }
   listContacts({ signal, verifyFollowing = this.following === null, backgroundOnly = false } = {}) {
     return this.withPage(async page => {

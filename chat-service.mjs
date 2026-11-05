@@ -276,9 +276,14 @@ export class ChatService {
       } catch (error) { if (error.code !== 'CHAT_CONTROL_BUSY') this.log('worker.control_error', { message: error.message }); }
     }, 1000); this.heartbeat.unref?.();
   }
-  release() {
+  release({ preservePolicy = false } = {}) {
     if (!this.runId || this.busy || this.starting || this.groupVideos?.running) return;
-    try { this.control(() => { this.assertOwned(); const policy = validatePolicy(load(this.policyFile, this.policy)); policy.enabled = false; save(this.policyFile, policy); fs.unlinkSync(this.lockFile); }); }
+    try { this.control(() => {
+      this.assertOwned();
+      // 只关闭进程：让路等待（前台/浏览器未运行/页面未开）不修改用户的开关，也不覆盖策略文件。
+      if (!preservePolicy) { const policy = validatePolicy(load(this.policyFile, this.policy)); policy.enabled = false; save(this.policyFile, policy); }
+      fs.unlinkSync(this.lockFile);
+    }); }
     catch (error) { if (error.code === 'CHAT_CONTROL_BUSY') return; if (this.ownershipLost) return; throw error; }
     clearInterval(this.heartbeat); this.heartbeat = null; this.runId = null;
   }
@@ -481,7 +486,8 @@ export class ChatService {
     if (this.running) return this.state();
     if (this.starting) return this.starting;
     this.starting = this.begin(schedule, signal);
-    try { return await this.starting; } finally { this.starting = null; if (!this.running) this.release(); }
+    try { return await this.starting; }
+    finally { this.starting = null; if (!this.running) this.release({ preservePolicy: this.deferredFailure === true }); }
   }
   async resumeAfterMaintenance() {
     this.clearReplyQualifications();
@@ -572,6 +578,7 @@ export class ChatService {
   }
   async begin(schedule, externalSignal) {
     this.clearReplyQualifications();
+    this.deferredFailure = false;
     if(!readFriendInteractionsEnabled(this.stateDir))throw new Error('好友互动总开关已关闭，未启动私信回复。');
     if (!this.config?.apiKey && typeof this.agent.replyProvider !== 'function') throw new Error('没有找到 DeepSeek API Key。');
     this.acquire();
@@ -632,8 +639,11 @@ export class ChatService {
       if (schedule) this.startPolling();
       return this.state();
     } catch (error) {
-      this.running = false; this.stopPolling(); this.policy.enabled = false;
+      this.running = false; this.stopPolling();
       const deferred = ['CHAT_FOREGROUND', 'BROWSER_NOT_RUNNING', 'CHAT_PAGE_NOT_OPEN', 'CHAT_PAGE_LEFT_DOUYIN'].includes(error.code);
+      // 让路等待不改变用户的开关意图：保留内存标记，由 release() 决定是否写回关闭。
+      this.deferredFailure = deferred;
+      if (!deferred) this.policy.enabled = false;
       this.log(deferred ? 'service.deferred' : 'service.start_failed', { code: error.code || '', message: error.message });
       throw error;
     }
