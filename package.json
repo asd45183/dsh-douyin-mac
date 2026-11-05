@@ -1,6 +1,6 @@
 {
   "name": "dsh-douyin-mac",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "type": "module",
   "description": "macOS 版抖音 DSH 插件：Chrome 专用窗口、扫码/短信登录、人格记忆、自主观看与日报",
   "license": "MIT",
@@ -124,7 +124,9 @@
     "interaction-status.mjs",
     "assets/brand.ico",
     "assets/brand.png",
-    "assets/PROVENANCE.json"
+    "assets/PROVENANCE.json",
+    "autonomous-follow.mjs",
+    "scripts/fans-probe.mjs"
   ],
   "exports": {
     ".": "./dsh-plugin.mjs",

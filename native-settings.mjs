@@ -39,7 +39,8 @@ export function createNativeSettingsRoute({ getController, getComments, getFollo
       if (!url.pathname.startsWith(`${PREFIX}/diagnostics`)) for (const getter of [getChat]) if (getter) { const service = await getter(); if (service.agent) { service.agent.usageLedger = usageLedger; service.agent.source = 'dsh'; } }
       if (req.method === 'GET' && url.pathname === `${PREFIX}/account/state`) return send(res, 200, await controller.accountState());
       if (req.method === 'GET' && url.pathname === `${PREFIX}/state`) {
-        const [spark,comments,follow,reports,watch,chat,share,friends] = await Promise.all([getSpark?.(),getComments(),getFollow?.(),getReport(),getWatch(),getChat?.(),getShare?.(),getFriends?.()]);
+        const optional = async reader => { try { return reader ? await reader() : null; } catch { return null; } };
+        const [spark,comments,follow,reports,watch,chat,share,friends] = await Promise.all([getSpark?.(),getComments(),optional(getFollow),getReport(),getWatch(),getChat?.(),getShare?.(),getFriends?.()]);
         const chatState=chat?.state()||{}, watchState=watch.state(), shareState=share?.state()||{}, commentsState=comments.state(), video=controller.limits().state();
         const pendingWatch=watchState.pendingRequests||0,pendingChat=(chatState.contacts||[]).filter(item=>item.pending?.phase==='model').length;
         const usage={...usageLedger.state(),checkedAt:new Date().toISOString(),inProgress:{watch:pendingWatch,chat:pendingChat,total:pendingWatch+pendingChat},videoDaily:video.daily||null};
